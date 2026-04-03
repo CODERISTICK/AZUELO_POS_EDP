@@ -18,7 +18,7 @@ public class DBConnection {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
             con = DriverManager.getConnection(
-                "jdbc:mysql://localhost:3306/pointofsale",
+                "jdbc:mysql://localhost:3306/pointofsale?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC",
                 "root",
                 ""
             );

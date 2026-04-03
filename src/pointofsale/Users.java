@@ -15,7 +15,6 @@ public class Users {
         con = DBConnection.getConnection();
     }
 
-    // INNER CLASS FOR GETTING USER DETAILS
     public static class UserDetails {
         public int userId;
         public String firstName;
@@ -28,7 +27,6 @@ public class Users {
         public String updatedAt;
     }
 
-    // ADD USER
     public boolean addUser(String firstName, String middleName, String lastName,
             String username, String password, String role, String status) {
 
@@ -49,15 +47,39 @@ public class Users {
         }
 
         try {
-            String checkSql = "SELECT COUNT(*) FROM users WHERE username = ?";
-            PreparedStatement checkPst = con.prepareStatement(checkSql);
-            checkPst.setString(1, username);
+            String checkNameSql = "SELECT COUNT(*) FROM users "
+                    + "WHERE first_name = ? AND middle_name = ? AND last_name = ?";
+            PreparedStatement checkNamePst = con.prepareStatement(checkNameSql);
+            checkNamePst.setString(1, firstName);
+            checkNamePst.setString(2, middleName);
+            checkNamePst.setString(3, lastName);
 
-            ResultSet rs = checkPst.executeQuery();
-            if (rs.next() && rs.getInt(1) > 0) {
+            ResultSet rsName = checkNamePst.executeQuery();
+            if (rsName.next() && rsName.getInt(1) > 0) {
+                JOptionPane.showMessageDialog(null,
+                        "User already exists with the same full name.",
+                        "Duplicate User",
+                        JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
+            String checkUsernameSql = "SELECT COUNT(*) FROM users WHERE username = ?";
+            PreparedStatement checkUserPst = con.prepareStatement(checkUsernameSql);
+            checkUserPst.setString(1, username);
+
+            ResultSet rsUser = checkUserPst.executeQuery();
+            if (rsUser.next() && rsUser.getInt(1) > 0) {
                 JOptionPane.showMessageDialog(null,
                         "Username already exists. Please use another username.",
                         "Duplicate Username",
+                        JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
+            if ("Super Admin".equals(role) && isSuperAdminExists()) {
+                JOptionPane.showMessageDialog(null,
+                        "Only one Super Admin account is allowed in the system.",
+                        "Super Admin Restricted",
                         JOptionPane.WARNING_MESSAGE);
                 return false;
             }
@@ -96,7 +118,6 @@ public class Users {
         }
     }
 
-    // UPDATE USER
     public boolean updateUser(int id, String firstName, String middleName,
             String lastName, String username, String password,
             String role, String status) {
@@ -130,10 +151,29 @@ public class Users {
                 return false;
             }
 
+            if (isFullNameExists(firstName, middleName, lastName, id)) {
+                JOptionPane.showMessageDialog(null,
+                        "User already exists with the same full name.",
+                        "Duplicate User",
+                        JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
+            UserDetails currentUser = getUserById(id);
+            if ("Super Admin".equals(role)
+                    && currentUser != null
+                    && !"Super Admin".equals(currentUser.role)
+                    && isSuperAdminExists()) {
+                JOptionPane.showMessageDialog(null,
+                        "Only one Super Admin account is allowed in the system.",
+                        "Super Admin Restricted",
+                        JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
             String sql;
             PreparedStatement pst;
 
-            // do not change password if blank
             if (password.isEmpty()) {
                 sql = "UPDATE users SET first_name=?, middle_name=?, last_name=?, "
                         + "username=?, role=?, status=?, updated_at=NOW() "
@@ -149,7 +189,6 @@ public class Users {
                 pst.setInt(7, id);
 
             } else {
-                // hash new password here
                 String hashedPassword = PasswordUtils.hashPassword(password);
 
                 sql = "UPDATE users SET first_name=?, middle_name=?, last_name=?, "
@@ -179,12 +218,17 @@ public class Users {
         }
     }
 
-    
-    
-
-    // DELETE USER
     public boolean deleteUser(int id) {
         try {
+            UserDetails user = getUserById(id);
+            if (user != null && "Super Admin".equals(user.role)) {
+                JOptionPane.showMessageDialog(null,
+                        "Super Admin account cannot be deleted.",
+                        "Delete Blocked",
+                        JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
             String sql = "DELETE FROM users WHERE user_id=?";
             PreparedStatement pst = con.prepareStatement(sql);
             pst.setInt(1, id);
@@ -204,7 +248,6 @@ public class Users {
         }
     }
 
-    // GET USER BY ID
     public UserDetails getUserById(int userId) {
         UserDetails user = null;
 
@@ -240,7 +283,6 @@ public class Users {
         return user;
     }
 
-    // LOAD USERS TO TABLE
     public void loadUsers(JTable table) {
         try {
             String sql = "SELECT user_id, first_name, middle_name, last_name, role, status, created_at, updated_at "
@@ -281,7 +323,6 @@ public class Users {
         }
     }
 
-    // FILTER USERS
     public void filterUsers(JTable table, String search, String roleFilter) {
         try {
             String sql = "SELECT user_id, first_name, middle_name, last_name, role, status, created_at, updated_at "
@@ -336,5 +377,167 @@ public class Users {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public boolean isUsernameExists(String username, int excludeUserId) {
+        try {
+            String sql;
+            PreparedStatement pst;
+
+            if (excludeUserId > 0) {
+                sql = "SELECT COUNT(*) FROM users WHERE username = ? AND user_id <> ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, username);
+                pst.setInt(2, excludeUserId);
+            } else {
+                sql = "SELECT COUNT(*) FROM users WHERE username = ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, username);
+            }
+
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    public boolean isNameExists(String firstName, String middleName, String lastName, int excludeUserId) {
+        try {
+            String normFirst = firstName == null ? "" : firstName.trim().replaceAll("\\s+", " ").toLowerCase();
+            String normMiddle = middleName == null ? "" : middleName.trim().replaceAll("\\s+", " ").toLowerCase();
+            String normLast = lastName == null ? "" : lastName.trim().replaceAll("\\s+", " ").toLowerCase();
+
+            String sql;
+            PreparedStatement pst;
+
+            if (excludeUserId > 0) {
+                sql = "SELECT COUNT(*) FROM users WHERE " +
+                      "LOWER(TRIM(REPLACE(first_name, '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(COALESCE(middle_name, ''), '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(last_name, '  ', ' '))) = ? AND " +
+                      "user_id <> ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, normFirst);
+                pst.setString(2, normMiddle);
+                pst.setString(3, normLast);
+                pst.setInt(4, excludeUserId);
+            } else {
+                sql = "SELECT COUNT(*) FROM users WHERE " +
+                      "LOWER(TRIM(REPLACE(first_name, '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(COALESCE(middle_name, ''), '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(last_name, '  ', ' '))) = ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, normFirst);
+                pst.setString(2, normMiddle);
+                pst.setString(3, normLast);
+            }
+
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    // Check if First + Last name exists (for soft warning) - regardless of middle name
+    public boolean isFirstLastNameExists(String firstName, String lastName, int excludeUserId) {
+        try {
+            String normFirst = firstName == null ? "" : firstName.trim().replaceAll("\\s+", " ").toLowerCase();
+            String normLast = lastName == null ? "" : lastName.trim().replaceAll("\\s+", " ").toLowerCase();
+
+            String sql;
+            PreparedStatement pst;
+
+            if (excludeUserId > 0) {
+                sql = "SELECT COUNT(*) FROM users WHERE " +
+                      "LOWER(TRIM(REPLACE(first_name, '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(last_name, '  ', ' '))) = ? AND " +
+                      "user_id <> ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, normFirst);
+                pst.setString(2, normLast);
+                pst.setInt(3, excludeUserId);
+            } else {
+                sql = "SELECT COUNT(*) FROM users WHERE " +
+                      "LOWER(TRIM(REPLACE(first_name, '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(last_name, '  ', ' '))) = ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, normFirst);
+                pst.setString(2, normLast);
+            }
+
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    // Check if full name (First + Middle + Last) exists (for hard block)
+    public boolean isFullNameExists(String firstName, String middleName, String lastName, int excludeUserId) {
+        try {
+            String normFirst = firstName == null ? "" : firstName.trim().replaceAll("\\s+", " ").toLowerCase();
+            String normMiddle = middleName == null ? "" : middleName.trim().replaceAll("\\s+", " ").toLowerCase();
+            String normLast = lastName == null ? "" : lastName.trim().replaceAll("\\s+", " ").toLowerCase();
+
+            String sql;
+            PreparedStatement pst;
+
+            if (excludeUserId > 0) {
+                sql = "SELECT COUNT(*) FROM users WHERE " +
+                      "LOWER(TRIM(REPLACE(first_name, '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(COALESCE(middle_name, ''), '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(last_name, '  ', ' '))) = ? AND " +
+                      "user_id <> ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, normFirst);
+                pst.setString(2, normMiddle);
+                pst.setString(3, normLast);
+                pst.setInt(4, excludeUserId);
+            } else {
+                sql = "SELECT COUNT(*) FROM users WHERE " +
+                      "LOWER(TRIM(REPLACE(first_name, '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(COALESCE(middle_name, ''), '  ', ' '))) = ? AND " +
+                      "LOWER(TRIM(REPLACE(last_name, '  ', ' '))) = ?";
+                pst = con.prepareStatement(sql);
+                pst.setString(1, normFirst);
+                pst.setString(2, normMiddle);
+                pst.setString(3, normLast);
+            }
+
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    // Check if Super Admin already exists (for validation)
+    public boolean isSuperAdminExists() {
+        try {
+            String sql = "SELECT COUNT(*) FROM users WHERE role = 'Super Admin'";
+            PreparedStatement pst = con.prepareStatement(sql);
+            
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
     }
 }

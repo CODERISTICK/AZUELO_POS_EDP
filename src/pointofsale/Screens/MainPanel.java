@@ -4,15 +4,7 @@
  */
 package pointofsale.Screens;
 
-import javax.swing.JOptionPane;
-import pointofsale.Screens.MainPanel;
-import pointofsale.Users;
-
-import pointofsale.Category;
-
-import javax.swing.JOptionPane;
-import pointofsale.Supplier;
-
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Image;
 import java.io.File;
@@ -22,28 +14,19 @@ import javax.swing.JOptionPane;
 import javax.swing.JTable;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
+import org.netbeans.lib.awtextra.AbsoluteLayout;
+import pointofsale.Category;
 import pointofsale.Products;
-
-import java.awt.CardLayout;
-import java.awt.Color;
-import java.awt.Image;
-import java.io.File;
-import javax.swing.ImageIcon;
-import javax.swing.JOptionPane;
-import javax.swing.table.DefaultTableCellRenderer;
+import pointofsale.Supplier;
+import pointofsale.Users;
 import pointofsale.InventoryMovement;
-
-
 import pointofsale.PosController;
-
 import pointofsale.SalesHistory;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import javax.swing.table.DefaultTableModel;
-
 import pointofsale.Reports;
-import javax.swing.JOptionPane;
 import pointofsale.Dashboard;
 
 import java.time.LocalDateTime;
@@ -77,11 +60,18 @@ public class MainPanel extends javax.swing.JFrame {
     String oldAddress = "";
     
      private boolean isValidEmail(String email) {
-        return email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$");
+        // Enhanced email validation
+        String emailRegex = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$";
+        return email.matches(emailRegex) && !email.contains(" ") && email.length() > 5;
     }
 
     private boolean isNumbersOnly(String text) {
         return text.matches("\\d+");
+    }
+    
+    private boolean isValidPhilippineContactNumber(String contactNumber) {
+        // Philippine contact number validation: exactly 11 digits
+        return contactNumber.matches("^\\d{11}$") && contactNumber.startsWith("09");
     }
     
     
@@ -115,10 +105,25 @@ public class MainPanel extends javax.swing.JFrame {
     private Reports reports = new Reports();
     
     //users
+    private boolean isEditMode = false;
+    private int selectedUserId = -1;
     
     private String loggedInWelcomeName;
     private String loggedInFullName;
     private String loggedInRole;
+
+    private String salesHistoryQuickPeriod = "TODAY";
+    private String salesHistorySummaryFocus = "SALES";
+    private javax.swing.JButton salesTodayFilterBtn;
+    private javax.swing.JButton salesWeekFilterBtn;
+    private javax.swing.JButton salesMonthFilterBtn;
+    private javax.swing.JButton salesYearFilterBtn;
+    private String dashboardSalesFilter = "TODAY";
+
+    private javax.swing.JButton salesTodayBtn;
+    private javax.swing.JButton salesWeekBtn;
+    private javax.swing.JButton salesMonthBtn;
+    private javax.swing.JButton salesYearBtn;
     
     //rbac
     private java.util.Set<javax.swing.JPanel> restrictedPanels = new java.util.HashSet<>();
@@ -141,6 +146,7 @@ public class MainPanel extends javax.swing.JFrame {
         user.loadUsers(user_tbl);
 
         setupSidebarMenu();
+        initializeDashboardSalesFilterButtons();
 
         selectedMenu = DashboardPanel1;
         DashboardPanel1.setBackground(selectedColor);
@@ -182,7 +188,9 @@ public class MainPanel extends javax.swing.JFrame {
 
         inv.loadStockInTable(StockIn_tbl, "", "ALL");
         inv.loadStockOutTable(StockOUT_tbl, "");
-        inv.loadStockMovementTable(stockMovement_tbl, "", "ALL");
+        reloadStockMovementTable();
+
+        stocksType_cmb.addActionListener(e -> reloadStockMovementTable());
 
         typeIn_cmb.removeAllItems();
         typeIn_cmb.addItem("ALL");
@@ -208,45 +216,8 @@ public class MainPanel extends javax.swing.JFrame {
         //salesHistory
         salesHistory.loadCashierCombo(cashierSalesHistory_cmb);
         salesHistory.loadPaymentMethodCombo(paymentMethodSAlesHistory_cmb);
-        salesHistory.loadSalesHistoryTable(salesList_tbl);
-
-        SalesHistory.SalesSummary summary = salesHistory.getSalesSummary(
-                "", "", "",
-                (String) cashierSalesHistory_cmb.getSelectedItem(),
-                (String) paymentMethodSAlesHistory_cmb.getSelectedItem()
-        );
-
-        salesHistory.setSummaryLabels(
-                totalSales_lbl,
-                transactionHsitory_lbl,
-                itemSold_lbl,
-                totalDiscount_lbl,
-                summary
-        );
-
-        salesList_tbl.getColumnModel().getColumn(0).setMinWidth(0);
-        salesList_tbl.getColumnModel().getColumn(0).setMaxWidth(0);
-        salesList_tbl.getColumnModel().getColumn(0).setWidth(0);
-        
-        
-        // Make sales table horizontally scrollable
-        salesList_tbl.setAutoResizeMode(javax.swing.JTable.AUTO_RESIZE_OFF);
-
-        // Set column widths
-        salesList_tbl.getColumnModel().getColumn(1).setPreferredWidth(120); // Invoice
-        salesList_tbl.getColumnModel().getColumn(2).setPreferredWidth(160); // Date
-        salesList_tbl.getColumnModel().getColumn(3).setPreferredWidth(150); // Cashier
-        salesList_tbl.getColumnModel().getColumn(4).setPreferredWidth(100); // Subtotal
-        salesList_tbl.getColumnModel().getColumn(5).setPreferredWidth(80);  // VAT
-        salesList_tbl.getColumnModel().getColumn(6).setPreferredWidth(120); // Discount
-        salesList_tbl.getColumnModel().getColumn(7).setPreferredWidth(120); // Total
-        salesList_tbl.getColumnModel().getColumn(8).setPreferredWidth(120); // Payment
-        salesList_tbl.getColumnModel().getColumn(9).setPreferredWidth(120); // Change
-
-        // Hide sale_id column if you use it internally
-        salesList_tbl.getColumnModel().getColumn(0).setMinWidth(0);
-        salesList_tbl.getColumnModel().getColumn(0).setMaxWidth(0);
-        salesList_tbl.getColumnModel().getColumn(0).setWidth(0);
+        initializeSalesHistoryInteractiveUI();
+        applySalesQuickPeriod("TODAY");
         
         //reports
         reports.loadReportTypes(ReportType_txt);
@@ -274,7 +245,8 @@ public class MainPanel extends javax.swing.JFrame {
                 totalSalesDashboard,
                 outOfStockdashboard_lbl,
                 totalCategory_lbl,
-                totalTransaction_lbl
+            totalTransaction_lbl,
+            dashboardSalesFilter
         );
 
         dashboard.loadTopSellingProducts(dashboard_tbl);
@@ -291,6 +263,10 @@ public class MainPanel extends javax.swing.JFrame {
         
         
          refreshProductCombos();
+         setupDashboardTableSelection();
+         cashierSalesHistory_cmb.addActionListener(e -> applySalesHistoryFilters());
+         paymentMethodSAlesHistory_cmb.addActionListener(e -> applySalesHistoryFilters());
+         installSalesHistoryRealtimeListeners();
         
     }
 
@@ -305,6 +281,14 @@ public class MainPanel extends javax.swing.JFrame {
         loadLoggedInUserDetails();
         applyRoleBasedAccess();
 
+        Runnable afterCheckoutRefresh = () -> {
+    // put your refresh methods here
+    // example:
+    // dashboardPanel.refreshDashboard();
+    // salesHistoryPanel.loadSalesHistory();
+    // reportsPanel.loadReports();
+};
+        
         posController = new PosController(
                 posPanel,
                 headerPanel,
@@ -312,19 +296,81 @@ public class MainPanel extends javax.swing.JFrame {
                 cartPanel,
                 paymentPanel,
                 buttonPanel,
+                imagePanel,
                 loggedInUsername,
-                () -> {
-                    InventoryMovement inv = new InventoryMovement();
-                    inv.loadStockMovementTable(stockMovement_tbl, "", "ALL");
-                    inv.loadStockOutTable(StockOUT_tbl, "");
-                    inv.loadStockInTable(StockIn_tbl, "", "ALL");
-
-                    refreshDashboard();
-                    refreshInventoryModule();
-                    refreshSalesHistoryModule();
-                    refreshReportsModule();
-                }
+            loggedInFullName,
+                afterCheckoutRefresh
         );
+    }
+    
+    
+    //dashboard
+    private void setupDashboardTableSelection() {
+        dashboard_tbl.getSelectionModel().addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting()) {
+                return;
+            }
+
+            if (dashboard_tbl.getSelectedRow() == -1) {
+                refreshDashboard();
+            }
+        });
+    }
+
+    private void initializeDashboardSalesFilterButtons() {
+        if (DashboardPanelHeader == null) {
+            return;
+        }
+
+        salesTodayBtn = new javax.swing.JButton("Today");
+        salesWeekBtn = new javax.swing.JButton("Week");
+        salesMonthBtn = new javax.swing.JButton("Month");
+        salesYearBtn = new javax.swing.JButton("Year");
+
+        styleDashboardSalesFilterButton(salesTodayBtn, "TODAY");
+        styleDashboardSalesFilterButton(salesWeekBtn, "WEEK");
+        styleDashboardSalesFilterButton(salesMonthBtn, "MONTH");
+        styleDashboardSalesFilterButton(salesYearBtn, "YEAR");
+
+        DashboardPanelHeader.add(salesTodayBtn, new org.netbeans.lib.awtextra.AbsoluteConstraints(760, 5, 70, 24));
+        DashboardPanelHeader.add(salesWeekBtn, new org.netbeans.lib.awtextra.AbsoluteConstraints(835, 5, 70, 24));
+        DashboardPanelHeader.add(salesMonthBtn, new org.netbeans.lib.awtextra.AbsoluteConstraints(910, 5, 70, 24));
+        DashboardPanelHeader.add(salesYearBtn, new org.netbeans.lib.awtextra.AbsoluteConstraints(985, 5, 70, 24));
+
+        updateDashboardSalesFilterButtons();
+        DashboardPanelHeader.revalidate();
+        DashboardPanelHeader.repaint();
+    }
+
+    private void styleDashboardSalesFilterButton(javax.swing.JButton button, String period) {
+        button.setFocusable(false);
+        button.setForeground(Color.WHITE);
+        button.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 11));
+        button.setBorder(javax.swing.BorderFactory.createLineBorder(new Color(173, 189, 204)));
+        button.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
+        button.addActionListener(e -> applyDashboardSalesFilter(period));
+    }
+
+    private void applyDashboardSalesFilter(String period) {
+        dashboardSalesFilter = period;
+        updateDashboardSalesFilterButtons();
+        refreshDashboard();
+    }
+
+    private void updateDashboardSalesFilterButtons() {
+        setDashboardFilterButtonState(salesTodayBtn, "TODAY");
+        setDashboardFilterButtonState(salesWeekBtn, "WEEK");
+        setDashboardFilterButtonState(salesMonthBtn, "MONTH");
+        setDashboardFilterButtonState(salesYearBtn, "YEAR");
+    }
+
+    private void setDashboardFilterButtonState(javax.swing.JButton button, String period) {
+        if (button == null) {
+            return;
+        }
+
+        boolean active = dashboardSalesFilter.equalsIgnoreCase(period);
+        button.setBackground(active ? new Color(52, 152, 219) : new Color(75, 96, 117));
     }
     
     
@@ -409,7 +455,7 @@ private void showCard(String name) {
 
 // click menu
        private void menuClick(javax.swing.JPanel panel, String contentCardName, String headerCardName) {
-        if (isRestricted(panel)) {
+        if (!hasAccess(contentCardName)) {
             JOptionPane.showMessageDialog(
                     this,
                     "You are not allowed to access this module.",
@@ -609,6 +655,7 @@ private void showCard(String name) {
 
             switch (role) {
                 case "Super Admin":
+                case "Admin":
                     allowedModules.add("dashboard");
                     allowedModules.add("pos");
                     allowedModules.add("salesHistory");
@@ -729,21 +776,109 @@ private void showCard(String name) {
         return allowedModules.contains(moduleName);
     }
 
-    private void styleSidebarByAccess() {
-        stylePanelAccess(DashboardPanel1, "dashboard");
-        stylePanelAccess(PosPanel, "pos");
-        stylePanelAccess(SalesHistoryPanel, "salesHistory");
-        stylePanelAccess(InventoryPanel, "inventory");
-        stylePanelAccess(ProductsPanel, "products");
-        stylePanelAccess(CategoriesPanel, "categories");
-        stylePanelAccess(SuppliersPanel, "suppliers");
-        stylePanelAccess(ReportsPanel, "reports");
-        stylePanelAccess(UsersPanel, "users");
+    private boolean hasAccess(String moduleName) {
+        return canAccessModule(moduleName);
     }
 
-    private void stylePanelAccess(javax.swing.JPanel panel, String moduleName) {
-        boolean restricted = !canAccessModule(moduleName);
-        setPanelRestricted(panel, restricted);
+    private boolean hasModuleAccess(String moduleName) {
+        return moduleName != null && hasAccess(moduleName);
+    }
+
+    private boolean ensureAccessOrWarn(String moduleName) {
+        if (!hasModuleAccess(moduleName)) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Access Denied",
+                    "Access Denied",
+                    JOptionPane.WARNING_MESSAGE
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    private void openDashboardModule(String moduleName, String contentCardName, String headerCardName) {
+        if (!ensureAccessOrWarn(moduleName)) {
+            return;
+        }
+
+        showModule(contentCardName, headerCardName);
+    }
+
+    private void openInventoryStockMonitoring() {
+        if (!ensureAccessOrWarn("inventory")) {
+            return;
+        }
+
+        showModule("inventory", "inventoryCard");
+
+        CardLayout contentCards = (CardLayout) InventoryContentPanel.getLayout();
+        contentCards.show(InventoryContentPanel, "StockMovement");
+
+        CardLayout tableCards = (CardLayout) jtablePanel.getLayout();
+        tableCards.show(jtablePanel, "StockMovementJ");
+
+        inventoryMode = "STOCK MOVEMENT";
+        saveInventory_btn.setText("Save Inventory");
+    }
+
+    private void styleSidebarByAccess() {
+        updateSidebarVisibility();
+    }
+
+    private void updateSidebarVisibility() {
+        javax.swing.JPanel[] panels = new javax.swing.JPanel[]{
+            UsersPanel,
+            CategoriesPanel,
+            SuppliersPanel,
+            ProductsPanel,
+            InventoryPanel,
+            PosPanel,
+            SalesHistoryPanel,
+            ReportsPanel,
+            DashboardPanel1
+        };
+
+        String[] moduleNames = new String[]{
+            "users",
+            "categories",
+            "suppliers",
+            "products",
+            "inventory",
+            "pos",
+            "salesHistory",
+            "reports",
+            "dashboard"
+        };
+
+        for (int i = 0; i < panels.length; i++) {
+            boolean visible = hasAccess(moduleNames[i]);
+            panels[i].setVisible(visible);
+        }
+
+        repositionVisibleSidebarPanels(panels);
+    }
+
+    private void repositionVisibleSidebarPanels(javax.swing.JPanel[] panels) {
+        // Derive base metrics from the first panel to preserve sizing; fallback to defaults if zero.
+        int baseX = (panels.length > 0) ? panels[0].getX() : 0;
+        int baseY = (panels.length > 0) ? panels[0].getY() : 60;
+        int baseWidth = (panels.length > 0 && panels[0].getWidth() > 0) ? panels[0].getWidth() : 190;
+        int baseHeight = (panels.length > 0 && panels[0].getHeight() > 0) ? panels[0].getHeight() : 40;
+
+        int gap = 10;
+        int currentY = baseY;
+
+        for (javax.swing.JPanel panel : panels) {
+            if (panel.isVisible()) {
+                panel.setBounds(baseX, currentY, baseWidth, baseHeight);
+                currentY += baseHeight + gap;
+            }
+        }
+
+        SideBarPanel.revalidate();
+        SideBarPanel.repaint();
     }
     
     
@@ -766,14 +901,8 @@ private void showCard(String name) {
             showModule("dashboard", "dashboardCard");
         }
     }
-       
-       
-       
-       
-      
-       
-        //clearfields
-     private void clearFields() {
+
+    private void clearFields() {
         user_tbl.clearSelection();
 
         userID_txt.setText("[Auto]");
@@ -783,18 +912,31 @@ private void showCard(String name) {
         username_txt.setText("");
         password_txt.setText("");
         confirmPass_txt.setText("");
+        confirmPass_txt.setForeground(java.awt.Color.BLACK);
 
-        role_cmb.setSelectedIndex(0);     // or setSelectedItem("Super Admin") if you want
-        status_cmb.setSelectedIndex(0);   // or setSelectedItem("Active")
+        role_cmb.setEnabled(true);
+        role_cmb.removeAllItems();
+        role_cmb.addItem("Super Admin");
+        role_cmb.addItem("Admin");
+        role_cmb.addItem("Cashier");
+        role_cmb.addItem("Inventory Clerk");
+        role_cmb.addItem("Manager");
+        role_cmb.setSelectedIndex(0);
+        status_cmb.setSelectedIndex(0);
 
         createdAt_txt1.setText("[Auto]");
         updatedat_txt1.setText("[Auto]");
 
-        firstname_txt1.requestFocus();
+        isEditMode = false;
+        selectedUserId = -1;
+        addUser_btn.setEnabled(true);
+        update_btn.setText("UPDATE");
+
+        password_txt.setEchoChar('\u2022');
+        confirmPass_txt.setEchoChar('\u2022');
     }
-      
-      //for products
-      private void checkBarcodeDuplicate() {
+
+    private void checkBarcodeDuplicate() {
         String barcode = barcode_txt.getText().trim();
 
         if (barcode.isEmpty()) {
@@ -836,9 +978,73 @@ private void showCard(String name) {
         Image_txt.setText("");
         selectedProductImagePath = "";
 
+        // Reset view mode and enable all buttons/fields
+        setProductViewMode(false);
         
         productEditMode = false;
         selectedProductId = -1;
+    }
+
+    private void setProductViewMode(boolean isViewMode) {
+        if (isViewMode) {
+            // Disable all buttons except clear
+            addProduct_btn.setEnabled(false);
+            updateProduct_btn.setEnabled(false);
+            deleteProduct_btn.setEnabled(false);
+            chooseImage_btn.setEnabled(false);
+            removeImage_btn.setEnabled(false);
+            
+            // Make all fields read-only
+            barcode_txt.setEditable(false);
+            productName_txt.setEditable(false);
+            costPrice_txt.setEditable(false);
+            sellingPrice_txt.setEditable(false);
+            stockquantity_txt.setEditable(false);
+            reorderLevel_txt.setEditable(false);
+            category_cmb.setEnabled(false);
+            supplier_cmb.setEnabled(false);
+            autoGenerateBarcode_rbt.setEnabled(false);
+            
+            // Set visual indication for view mode
+            barcode_txt.setBackground(new Color(240, 240, 240));
+            productName_txt.setBackground(new Color(240, 240, 240));
+            costPrice_txt.setBackground(new Color(240, 240, 240));
+            sellingPrice_txt.setBackground(new Color(240, 240, 240));
+            stockquantity_txt.setBackground(new Color(240, 240, 240));
+            reorderLevel_txt.setBackground(new Color(240, 240, 240));
+        } else {
+            // Enable all buttons
+            addProduct_btn.setEnabled(true);
+            updateProduct_btn.setEnabled(true);
+            deleteProduct_btn.setEnabled(true);
+            chooseImage_btn.setEnabled(true);
+            removeImage_btn.setEnabled(true);
+            
+            // Make all fields editable
+            barcode_txt.setEditable(true);
+            productName_txt.setEditable(true);
+            costPrice_txt.setEditable(true);
+            sellingPrice_txt.setEditable(true);
+            stockquantity_txt.setEditable(true);
+            reorderLevel_txt.setEditable(true);
+            category_cmb.setEnabled(true);
+            supplier_cmb.setEnabled(true);
+            autoGenerateBarcode_rbt.setEnabled(true);
+            
+            // Reset background colors and tooltips
+            barcode_txt.setBackground(Color.white);
+            barcode_txt.setToolTipText("");
+            productName_txt.setBackground(Color.white);
+            productName_txt.setToolTipText("");
+            costPrice_txt.setBackground(Color.white);
+            costPrice_txt.setToolTipText("");
+            sellingPrice_txt.setBackground(Color.white);
+            sellingPrice_txt.setToolTipText("");
+            stockquantity_txt.setBackground(Color.white);
+            stockquantity_txt.setToolTipText("");
+            reorderLevel_txt.setBackground(Color.white);
+            reorderLevel_txt.setToolTipText("");
+        }
     }
      
      
@@ -1132,7 +1338,8 @@ private void showCard(String name) {
                 totalSalesDashboard,
                 outOfStockdashboard_lbl,
                 totalCategory_lbl,
-                totalTransaction_lbl
+            totalTransaction_lbl,
+            dashboardSalesFilter
         );
 
         dashboard.loadTopSellingProducts(dashboard_tbl);
@@ -1144,26 +1351,246 @@ private void showCard(String name) {
         InventoryMovement inv = new InventoryMovement();
 
         // reload stock monitoring table
-        inv.loadStockMovementTable(stockMovement_tbl);
+        reloadStockMovementTable();
 
         // reload product combo boxes
         inv.loadProductCombo(productStockIN_cmb);
         inv.loadProductCombo(ProductOut_cmb);
     }
+
+    private String getSelectedStockMovementFilter() {
+        String selected = stocksType_cmb.getSelectedItem() == null
+                ? "ALL"
+                : stocksType_cmb.getSelectedItem().toString().trim();
+
+        switch (selected.toUpperCase()) {
+            case "LOW STOCK":
+                return "LOW STOCK";
+            case "OUT OF STOCK":
+                return "OUT OF STOCK";
+            case "IN STOCK":
+                return "IN STOCK";
+            default:
+                return "ALL";
+        }
+    }
+
+    private void reloadStockMovementTable() {
+        InventoryMovement inv = new InventoryMovement();
+        String keyword = stockMovementSearch_txt.getText().trim();
+        String type = getSelectedStockMovementFilter();
+        inv.loadStockMovementTable(stockMovement_tbl, keyword, type);
+    }
     
     
     private void refreshSalesHistoryModule() {
-        SalesHistory sh = new SalesHistory();
+        applySalesHistoryFilters();
+    }
 
-        sh.loadSalesHistoryTable(salesList_tbl);
 
-        SalesHistory.SalesSummary summary = sh.getSalesSummary(
-                "", "", "",
-                (String) cashierSalesHistory_cmb.getSelectedItem(),
-                (String) paymentMethodSAlesHistory_cmb.getSelectedItem()
+    private void initializeSalesHistoryInteractiveUI() {
+        if (salesHistoryPanel == null) {
+            return;
+        }
+
+        bindSalesSummaryCardInteractions();
+
+        salesTodayFilterBtn = createSalesQuickFilterButton("Today", "TODAY");
+        salesWeekFilterBtn = createSalesQuickFilterButton("Week", "WEEK");
+        salesMonthFilterBtn = createSalesQuickFilterButton("Month", "MONTH");
+        salesYearFilterBtn = createSalesQuickFilterButton("Year", "YEAR");
+
+        layoutSalesQuickFilterButtons();
+        updateSalesFilterButtonLabels();
+        salesHistoryPanel.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                layoutSalesQuickFilterButtons();
+            }
+        });
+
+        salesHistoryPanel.revalidate();
+        salesHistoryPanel.repaint();
+    }
+
+    private javax.swing.JButton createSalesQuickFilterButton(String text, String period) {
+        javax.swing.JButton button = new javax.swing.JButton(text);
+        button.setFocusable(false);
+        button.setForeground(java.awt.Color.WHITE);
+        button.setBackground(new java.awt.Color(74, 85, 104));
+        button.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
+        button.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 11));
+        button.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(110, 124, 143), 1));
+        button.addActionListener(e -> applySalesQuickPeriod(period));
+        button.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                button.setBackground(new java.awt.Color(96, 113, 135));
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                updateSalesFilterButtons();
+            }
+        });
+        return button;
+    }
+
+    private void bindSalesSummaryCardInteractions() {
+        attachSalesSummaryCard(jPanel38, "SALES");
+        attachSalesSummaryCard(jPanel40, "TRANSACTIONS");
+        attachSalesSummaryCard(jPanel39, "PRODUCTS");
+    }
+
+    private void attachSalesSummaryCard(javax.swing.JPanel card, String focus) {
+        card.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
+        card.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(255, 255, 255, 70), 1));
+        card.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                salesHistorySummaryFocus = focus;
+                updateSalesFilterButtonLabels();
+                updateSalesSummaryCardStyles();
+            }
+
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                card.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(255, 255, 255), 2));
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                updateSalesSummaryCardStyles();
+            }
+        });
+    }
+
+    private void applySalesQuickPeriod(String period) {
+        salesHistoryQuickPeriod = period;
+        applyDateRangeForPeriod(period);
+
+        applySalesHistoryFilters();
+    }
+
+    private void layoutSalesQuickFilterButtons() {
+        if (salesTodayFilterBtn == null || salesHistoryPanel == null) {
+            return;
+        }
+
+        int y = 230;
+        int btnW = 130;
+        int btnH = 28;
+        int gap = 12;
+        int totalW = (btnW * 4) + (gap * 3);
+        int startX = Math.max(40, (salesHistoryPanel.getWidth() - totalW) / 2);
+
+        placeSalesQuickFilterButton(salesTodayFilterBtn, startX, y, btnW, btnH);
+        placeSalesQuickFilterButton(salesWeekFilterBtn, startX + (btnW + gap), y, btnW, btnH);
+        placeSalesQuickFilterButton(salesMonthFilterBtn, startX + ((btnW + gap) * 2), y, btnW, btnH);
+        placeSalesQuickFilterButton(salesYearFilterBtn, startX + ((btnW + gap) * 3), y, btnW, btnH);
+
+        salesHistoryPanel.revalidate();
+        salesHistoryPanel.repaint();
+    }
+
+    private void placeSalesQuickFilterButton(javax.swing.JButton button, int x, int y, int w, int h) {
+        if (button == null || salesHistoryPanel == null) {
+            return;
+        }
+
+        if (button.getParent() == salesHistoryPanel) {
+            salesHistoryPanel.remove(button);
+        }
+
+        salesHistoryPanel.add(button, new org.netbeans.lib.awtextra.AbsoluteConstraints(x, y, w, h));
+    }
+
+    private void updateSalesFilterButtonLabels() {
+        if (salesTodayFilterBtn == null) {
+            return;
+        }
+
+        if ("TRANSACTIONS".equals(salesHistorySummaryFocus)) {
+            salesTodayFilterBtn.setText("Today Txn");
+            salesWeekFilterBtn.setText("Week Txn");
+            salesMonthFilterBtn.setText("Month Txn");
+            salesYearFilterBtn.setText("Year Txn");
+        } else if ("PRODUCTS".equals(salesHistorySummaryFocus)) {
+            salesTodayFilterBtn.setText("Today Items");
+            salesWeekFilterBtn.setText("Week Items");
+            salesMonthFilterBtn.setText("Month Items");
+            salesYearFilterBtn.setText("Year Items");
+        } else {
+            salesTodayFilterBtn.setText("Today Sales");
+            salesWeekFilterBtn.setText("Week Sales");
+            salesMonthFilterBtn.setText("Month Sales");
+            salesYearFilterBtn.setText("Year Sales");
+        }
+    }
+
+    private void applyDateRangeForPeriod(String period) {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        java.util.Date start;
+        java.util.Date end;
+
+        if ("TODAY".equalsIgnoreCase(period)) {
+            start = cal.getTime();
+            end = cal.getTime();
+        } else if ("WEEK".equalsIgnoreCase(period)) {
+            cal.setFirstDayOfWeek(java.util.Calendar.MONDAY);
+            cal.set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY);
+            start = cal.getTime();
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 6);
+            end = cal.getTime();
+        } else if ("MONTH".equalsIgnoreCase(period)) {
+            cal.set(java.util.Calendar.DAY_OF_MONTH, 1);
+            start = cal.getTime();
+            cal.set(java.util.Calendar.DAY_OF_MONTH, cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH));
+            end = cal.getTime();
+        } else if ("YEAR".equalsIgnoreCase(period)) {
+            cal.set(java.util.Calendar.DAY_OF_YEAR, 1);
+            start = cal.getTime();
+            cal.set(java.util.Calendar.MONTH, java.util.Calendar.DECEMBER);
+            cal.set(java.util.Calendar.DAY_OF_MONTH, 31);
+            end = cal.getTime();
+        } else {
+            return;
+        }
+
+        StartDateSalesHistory_txt.setDate(start);
+        endDateSalesHistory_txt.setDate(end);
+    }
+
+    private void applySalesHistoryFilters() {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+
+        Date start = StartDateSalesHistory_txt.getDate();
+        Date end = endDateSalesHistory_txt.getDate();
+
+        String startDate = (start == null) ? "" : sdf.format(start);
+        String endDate = (end == null) ? "" : sdf.format(end);
+        String invoiceNo = InvoiceNoSalesHistory_txt.getText().trim();
+        String cashier = (String) cashierSalesHistory_cmb.getSelectedItem();
+        String paymentMethod = (String) paymentMethodSAlesHistory_cmb.getSelectedItem();
+
+        salesHistory.loadSalesHistoryTableModern(
+                salesList_tbl,
+                startDate,
+                endDate,
+                invoiceNo,
+                cashier,
+                paymentMethod
         );
 
-        sh.setSummaryLabels(
+        SalesHistory.SalesSummary summary = salesHistory.getSalesSummary(
+                startDate,
+                endDate,
+                invoiceNo,
+                cashier,
+                paymentMethod
+        );
+
+        salesHistory.setSummaryLabels(
                 totalSales_lbl,
                 transactionHsitory_lbl,
                 itemSold_lbl,
@@ -1171,7 +1598,97 @@ private void showCard(String name) {
                 summary
         );
 
-        ((javax.swing.table.DefaultTableModel) selectedSaleItems_tbl.getModel()).setRowCount(0);
+        configureSalesHistoryTableColumns();
+        updateSalesSummaryTitles();
+        updateSalesFilterButtons();
+        updateSalesSummaryCardStyles();
+        updateSalesFilterButtonLabels();
+    }
+
+    private void configureSalesHistoryTableColumns() {
+        if (salesList_tbl.getColumnModel().getColumnCount() < 7) {
+            return;
+        }
+
+        salesList_tbl.setAutoResizeMode(javax.swing.JTable.AUTO_RESIZE_OFF);
+        salesList_tbl.getColumnModel().getColumn(0).setMinWidth(0);
+        salesList_tbl.getColumnModel().getColumn(0).setMaxWidth(0);
+        salesList_tbl.getColumnModel().getColumn(0).setWidth(0);
+
+        salesList_tbl.getColumnModel().getColumn(1).setPreferredWidth(150); // Date
+        salesList_tbl.getColumnModel().getColumn(2).setPreferredWidth(170); // Receipt No.
+        salesList_tbl.getColumnModel().getColumn(3).setPreferredWidth(130); // Customer
+        salesList_tbl.getColumnModel().getColumn(4).setPreferredWidth(120); // Total Amount
+        salesList_tbl.getColumnModel().getColumn(5).setPreferredWidth(120); // Payment Method
+        salesList_tbl.getColumnModel().getColumn(6).setPreferredWidth(180); // Cashier
+    }
+
+    private void updateSalesSummaryTitles() {
+        jLabel126.setText("TOTAL SALES");
+        jLabel123.setText("TRANSACTIONS");
+        jLabel124.setText("ITEMS SOLD");
+    }
+
+    private void updateSalesFilterButtons() {
+        setSalesFilterButtonActive(salesTodayFilterBtn, "TODAY".equalsIgnoreCase(salesHistoryQuickPeriod));
+        setSalesFilterButtonActive(salesWeekFilterBtn, "WEEK".equalsIgnoreCase(salesHistoryQuickPeriod));
+        setSalesFilterButtonActive(salesMonthFilterBtn, "MONTH".equalsIgnoreCase(salesHistoryQuickPeriod));
+        setSalesFilterButtonActive(salesYearFilterBtn, "YEAR".equalsIgnoreCase(salesHistoryQuickPeriod));
+    }
+
+    private void setSalesFilterButtonActive(javax.swing.JButton btn, boolean active) {
+        if (btn == null) {
+            return;
+        }
+        btn.setBackground(active ? new java.awt.Color(37, 99, 235) : new java.awt.Color(74, 85, 104));
+        btn.setBorder(javax.swing.BorderFactory.createLineBorder(
+                active ? new java.awt.Color(147, 197, 253) : new java.awt.Color(110, 124, 143),
+                active ? 2 : 1
+        ));
+    }
+
+    private void updateSalesSummaryCardStyles() {
+        jPanel38.setBorder(javax.swing.BorderFactory.createLineBorder(
+                "SALES".equals(salesHistorySummaryFocus) ? java.awt.Color.WHITE : new java.awt.Color(255, 255, 255, 70),
+                "SALES".equals(salesHistorySummaryFocus) ? 2 : 1
+        ));
+        jPanel40.setBorder(javax.swing.BorderFactory.createLineBorder(
+                "TRANSACTIONS".equals(salesHistorySummaryFocus) ? java.awt.Color.WHITE : new java.awt.Color(255, 255, 255, 70),
+                "TRANSACTIONS".equals(salesHistorySummaryFocus) ? 2 : 1
+        ));
+        jPanel39.setBorder(javax.swing.BorderFactory.createLineBorder(
+                "PRODUCTS".equals(salesHistorySummaryFocus) ? java.awt.Color.WHITE : new java.awt.Color(255, 255, 255, 70),
+                "PRODUCTS".equals(salesHistorySummaryFocus) ? 2 : 1
+        ));
+    }
+
+    private void installSalesHistoryRealtimeListeners() {
+        InvoiceNoSalesHistory_txt.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                applySalesHistoryFilters();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                applySalesHistoryFilters();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                applySalesHistoryFilters();
+            }
+        });
+
+        StartDateSalesHistory_txt.getDateEditor().addPropertyChangeListener("date", evt -> {
+            salesHistoryQuickPeriod = "";
+            applySalesHistoryFilters();
+        });
+
+        endDateSalesHistory_txt.getDateEditor().addPropertyChangeListener("date", evt -> {
+            salesHistoryQuickPeriod = "";
+            applySalesHistoryFilters();
+        });
     }
     
     
@@ -1249,9 +1766,6 @@ private void showCard(String name) {
         UsersPanelHeader = new javax.swing.JPanel();
         jLabel27 = new javax.swing.JLabel();
         SideBarPanel = new javax.swing.JPanel();
-        SalesHistoryPanel = new javax.swing.JPanel();
-        jLabel1 = new javax.swing.JLabel();
-        jLabel134 = new javax.swing.JLabel();
         DashboardPanel1 = new javax.swing.JPanel();
         jLabel2 = new javax.swing.JLabel();
         jLabel31 = new javax.swing.JLabel();
@@ -1282,9 +1796,12 @@ private void showCard(String name) {
         fullnameofUser_lbl = new javax.swing.JLabel();
         roleUser_lbl = new javax.swing.JLabel();
         jLabel34 = new javax.swing.JLabel();
+        SalesHistoryPanel = new javax.swing.JPanel();
+        jLabel1 = new javax.swing.JLabel();
+        jLabel134 = new javax.swing.JLabel();
         contentPanel = new javax.swing.JPanel();
         DashboardPanel = new javax.swing.JPanel();
-        jPanel2 = new javax.swing.JPanel();
+        products_panel = new javax.swing.JPanel();
         jPanel1 = new javax.swing.JPanel();
         jLabel19 = new javax.swing.JLabel();
         totalProduct_lbl = new javax.swing.JLabel();
@@ -1296,17 +1813,17 @@ private void showCard(String name) {
         jScrollPane1 = new javax.swing.JScrollPane();
         dashboard_tbl = new javax.swing.JTable();
         jLabel32 = new javax.swing.JLabel();
-        jPanel5 = new javax.swing.JPanel();
+        totalCategory_Panel = new javax.swing.JPanel();
         jLabel25 = new javax.swing.JLabel();
         jPanel59 = new javax.swing.JPanel();
         totalCategory_lbl = new javax.swing.JLabel();
         jLabel142 = new javax.swing.JLabel();
-        jPanel4 = new javax.swing.JPanel();
+        totalSales_Panel = new javax.swing.JPanel();
         jLabel24 = new javax.swing.JLabel();
         jPanel57 = new javax.swing.JPanel();
         totalSalesDashboard = new javax.swing.JLabel();
         jLabel147 = new javax.swing.JLabel();
-        jPanel9 = new javax.swing.JPanel();
+        transaction_panel = new javax.swing.JPanel();
         jPanel10 = new javax.swing.JPanel();
         jLabel29 = new javax.swing.JLabel();
         jLabel30 = new javax.swing.JLabel();
@@ -1314,22 +1831,22 @@ private void showCard(String name) {
         jPanel60 = new javax.swing.JPanel();
         totalTransaction_lbl = new javax.swing.JLabel();
         jLabel149 = new javax.swing.JLabel();
-        jPanel7 = new javax.swing.JPanel();
+        lowStock_Panel = new javax.swing.JPanel();
         jLabel20 = new javax.swing.JLabel();
         jPanel55 = new javax.swing.JPanel();
         lowstockDashboad_lbl = new javax.swing.JLabel();
         jLabel145 = new javax.swing.JLabel();
-        jPanel6 = new javax.swing.JPanel();
+        suppliers_panel = new javax.swing.JPanel();
         jLabel13 = new javax.swing.JLabel();
         jPanel8 = new javax.swing.JPanel();
         totalSupplier_lbl = new javax.swing.JLabel();
         jLabel144 = new javax.swing.JLabel();
-        jPanel3 = new javax.swing.JPanel();
+        users_panel = new javax.swing.JPanel();
         jLabel18 = new javax.swing.JLabel();
         jPanel56 = new javax.swing.JPanel();
         totalUser_lbl = new javax.swing.JLabel();
         jLabel146 = new javax.swing.JLabel();
-        jPanel53 = new javax.swing.JPanel();
+        outOfStock_Panel = new javax.swing.JPanel();
         jPanel54 = new javax.swing.JPanel();
         jLabel132 = new javax.swing.JLabel();
         jLabel133 = new javax.swing.JLabel();
@@ -1343,9 +1860,9 @@ private void showCard(String name) {
         cartPanel = new javax.swing.JPanel();
         paymentPanel = new javax.swing.JPanel();
         buttonPanel = new javax.swing.JPanel();
+        imagePanel = new javax.swing.JPanel();
         userPanel = new javax.swing.JPanel();
         jPanel13 = new javax.swing.JPanel();
-        jLabel35 = new javax.swing.JLabel();
         jPanel15 = new javax.swing.JPanel();
         jLabel36 = new javax.swing.JLabel();
         jLabel40 = new javax.swing.JLabel();
@@ -1355,19 +1872,18 @@ private void showCard(String name) {
         jLabel51 = new javax.swing.JLabel();
         jLabel52 = new javax.swing.JLabel();
         jLabel53 = new javax.swing.JLabel();
-        jLabel54 = new javax.swing.JLabel();
         middlename_txt = new javax.swing.JTextField();
         lastname_txt = new javax.swing.JTextField();
         username_txt = new javax.swing.JTextField();
         role_cmb = new javax.swing.JComboBox<>();
         status_cmb = new javax.swing.JComboBox<>();
-        updatedat_txt = new javax.swing.JTextField();
         userID_txt = new javax.swing.JTextField();
-        createdAt_txt = new javax.swing.JTextField();
         addUser_btn = new javax.swing.JButton();
         update_btn = new javax.swing.JButton();
         delete_btn = new javax.swing.JButton();
         clear_btn = new javax.swing.JButton();
+        ConfirmpasswordToggle_btn = new javax.swing.JToggleButton();
+        passwordToggle_btn = new javax.swing.JToggleButton();
         password_txt = new javax.swing.JPasswordField();
         jLabel55 = new javax.swing.JLabel();
         firstname_txt1 = new javax.swing.JTextField();
@@ -1419,10 +1935,6 @@ private void showCard(String name) {
         jLabel59 = new javax.swing.JLabel();
         address_txt = new javax.swing.JTextField();
         jLabel60 = new javax.swing.JLabel();
-        jLabel61 = new javax.swing.JLabel();
-        updatedat_txt2 = new javax.swing.JTextField();
-        jLabel62 = new javax.swing.JLabel();
-        createAt_txt3 = new javax.swing.JTextField();
         ClearSupplier_btn = new javax.swing.JButton();
         addSupplier_btn = new javax.swing.JButton();
         UpdateSupplier_btn = new javax.swing.JButton();
@@ -1601,6 +2113,8 @@ private void showCard(String name) {
         jPanel36 = new javax.swing.JPanel();
         stockMovementType_cmb = new javax.swing.JComboBox<>();
         jLabel116 = new javax.swing.JLabel();
+        jLabel158 = new javax.swing.JLabel();
+        stocksType_cmb = new javax.swing.JComboBox<>();
         stockmovement_btn = new javax.swing.JButton();
         clearInv_btn = new javax.swing.JButton();
         stockout_btn = new javax.swing.JButton();
@@ -1790,30 +2304,6 @@ private void showCard(String name) {
         SideBarPanel.setBackground(new java.awt.Color(44, 62, 80));
         SideBarPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
-        SalesHistoryPanel.setBackground(new java.awt.Color(44, 62, 80));
-        SalesHistoryPanel.addMouseListener(new java.awt.event.MouseAdapter() {
-            public void mouseClicked(java.awt.event.MouseEvent evt) {
-                SalesHistoryPanelMouseClicked(evt);
-            }
-            public void mouseEntered(java.awt.event.MouseEvent evt) {
-                SalesHistoryPanelMouseEntered(evt);
-            }
-            public void mouseExited(java.awt.event.MouseEvent evt) {
-                SalesHistoryPanelMouseExited(evt);
-            }
-        });
-        SalesHistoryPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
-
-        jLabel1.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
-        jLabel1.setForeground(new java.awt.Color(236, 240, 241));
-        jLabel1.setText("Sales History");
-        SalesHistoryPanel.add(jLabel1, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, 80, -1));
-
-        jLabel134.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/buy.png"))); // NOI18N
-        SalesHistoryPanel.add(jLabel134, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 10, -1, -1));
-
-        SideBarPanel.add(SalesHistoryPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 160, 190, 40));
-
         DashboardPanel1.setBackground(new java.awt.Color(44, 62, 80));
         DashboardPanel1.addMouseListener(new java.awt.event.MouseAdapter() {
             public void mouseClicked(java.awt.event.MouseEvent evt) {
@@ -1836,7 +2326,7 @@ private void showCard(String name) {
         jLabel31.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/data.png"))); // NOI18N
         DashboardPanel1.add(jLabel31, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 10, -1, -1));
 
-        SideBarPanel.add(DashboardPanel1, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 60, 190, 40));
+        SideBarPanel.add(DashboardPanel1, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 460, 190, 40));
 
         InventoryPanel.setBackground(new java.awt.Color(44, 62, 80));
         InventoryPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1860,7 +2350,7 @@ private void showCard(String name) {
         jLabel136.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/material-management.png"))); // NOI18N
         InventoryPanel.add(jLabel136, new org.netbeans.lib.awtextra.AbsoluteConstraints(26, 10, -1, -1));
 
-        SideBarPanel.add(InventoryPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 240, 190, 40));
+        SideBarPanel.add(InventoryPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 260, 190, 40));
 
         ReportsPanel.setBackground(new java.awt.Color(44, 62, 80));
         ReportsPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1884,7 +2374,7 @@ private void showCard(String name) {
         jLabel141.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/document.png"))); // NOI18N
         ReportsPanel.add(jLabel141, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 0, 30, 40));
 
-        SideBarPanel.add(ReportsPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 420, 190, 40));
+        SideBarPanel.add(ReportsPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 410, 190, 40));
 
         PosPanel.setBackground(new java.awt.Color(44, 62, 80));
         PosPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1908,7 +2398,7 @@ private void showCard(String name) {
         jLabel131.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/pos-terminal.png"))); // NOI18N
         PosPanel.add(jLabel131, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 10, -1, -1));
 
-        SideBarPanel.add(PosPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 120, 190, 40));
+        SideBarPanel.add(PosPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 310, 190, 40));
 
         ProductsPanel.setBackground(new java.awt.Color(44, 62, 80));
         ProductsPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1932,7 +2422,7 @@ private void showCard(String name) {
         jLabel138.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/new-product.png"))); // NOI18N
         ProductsPanel.add(jLabel138, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 4, -1, 30));
 
-        SideBarPanel.add(ProductsPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 280, 190, 40));
+        SideBarPanel.add(ProductsPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 210, 190, 40));
 
         CategoriesPanel.setBackground(new java.awt.Color(44, 62, 80));
         CategoriesPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1956,7 +2446,7 @@ private void showCard(String name) {
         jLabel139.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/market-segment.png"))); // NOI18N
         CategoriesPanel.add(jLabel139, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 0, -1, 40));
 
-        SideBarPanel.add(CategoriesPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 320, 190, 40));
+        SideBarPanel.add(CategoriesPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 110, 190, 40));
 
         SuppliersPanel.setBackground(new java.awt.Color(44, 62, 80));
         SuppliersPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1980,7 +2470,7 @@ private void showCard(String name) {
         jLabel140.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/supplier.png"))); // NOI18N
         SuppliersPanel.add(jLabel140, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 0, 30, 40));
 
-        SideBarPanel.add(SuppliersPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 360, 190, 40));
+        SideBarPanel.add(SuppliersPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 160, 190, 40));
 
         UsersPanel.setBackground(new java.awt.Color(44, 62, 80));
         UsersPanel.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -2004,7 +2494,7 @@ private void showCard(String name) {
         jLabel15.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/team.png"))); // NOI18N
         UsersPanel.add(jLabel15, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 0, 30, 40));
 
-        SideBarPanel.add(UsersPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 480, 190, 40));
+        SideBarPanel.add(UsersPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 60, 190, 40));
 
         jPanel29.setBackground(new java.awt.Color(255, 255, 255));
 
@@ -2038,6 +2528,30 @@ private void showCard(String name) {
         jLabel34.setText("CURRENT USER");
         SideBarPanel.add(jLabel34, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 536, 130, 20));
 
+        SalesHistoryPanel.setBackground(new java.awt.Color(44, 62, 80));
+        SalesHistoryPanel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                SalesHistoryPanelMouseClicked(evt);
+            }
+            public void mouseEntered(java.awt.event.MouseEvent evt) {
+                SalesHistoryPanelMouseEntered(evt);
+            }
+            public void mouseExited(java.awt.event.MouseEvent evt) {
+                SalesHistoryPanelMouseExited(evt);
+            }
+        });
+        SalesHistoryPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+
+        jLabel1.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
+        jLabel1.setForeground(new java.awt.Color(236, 240, 241));
+        jLabel1.setText("Sales History");
+        SalesHistoryPanel.add(jLabel1, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, 80, -1));
+
+        jLabel134.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/buy.png"))); // NOI18N
+        SalesHistoryPanel.add(jLabel134, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 10, -1, -1));
+
+        SideBarPanel.add(SalesHistoryPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 360, 190, 40));
+
         MainPanel.add(SideBarPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(0, 70, 190, 680));
 
         contentPanel.setBackground(new java.awt.Color(255, 255, 255));
@@ -2047,9 +2561,14 @@ private void showCard(String name) {
         DashboardPanel.setBackground(new java.awt.Color(255, 255, 255));
         DashboardPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
-        jPanel2.setBackground(new java.awt.Color(24, 15, 105));
-        jPanel2.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
-        jPanel2.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        products_panel.setBackground(new java.awt.Color(24, 15, 105));
+        products_panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
+        products_panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                products_panelMouseClicked(evt);
+            }
+        });
+        products_panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jPanel1.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2064,21 +2583,21 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel2.add(jPanel1, new org.netbeans.lib.awtextra.AbsoluteConstraints(40, 0, 1, 100));
+        products_panel.add(jPanel1, new org.netbeans.lib.awtextra.AbsoluteConstraints(40, 0, 1, 100));
 
         jLabel19.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel19.setForeground(new java.awt.Color(255, 255, 255));
         jLabel19.setText("TOTAL PRODUCTS");
-        jPanel2.add(jLabel19, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 10, -1, -1));
+        products_panel.add(jLabel19, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 10, -1, -1));
 
         totalProduct_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         totalProduct_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel2.add(totalProduct_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 50, 160, 40));
+        products_panel.add(totalProduct_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 50, 160, 40));
 
         jLabel143.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/new-product.png"))); // NOI18N
-        jPanel2.add(jLabel143, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        products_panel.add(jLabel143, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel2, new org.netbeans.lib.awtextra.AbsoluteConstraints(80, 20, 210, 100));
+        DashboardPanel.add(products_panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(80, 20, 210, 100));
 
         jPanel11.setBackground(new java.awt.Color(236, 240, 241));
         jPanel11.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
@@ -2125,6 +2644,11 @@ private void showCard(String name) {
                 return canEdit [columnIndex];
             }
         });
+        dashboard_tbl.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                dashboard_tblMouseClicked(evt);
+            }
+        });
         jScrollPane1.setViewportView(dashboard_tbl);
         if (dashboard_tbl.getColumnModel().getColumnCount() > 0) {
             dashboard_tbl.getColumnModel().getColumn(0).setResizable(false);
@@ -2141,14 +2665,19 @@ private void showCard(String name) {
 
         DashboardPanel.add(jPanel12, new org.netbeans.lib.awtextra.AbsoluteConstraints(690, 260, 480, 310));
 
-        jPanel5.setBackground(new java.awt.Color(18, 114, 137));
-        jPanel5.setBorder(javax.swing.BorderFactory.createEtchedBorder(new java.awt.Color(102, 51, 255), null));
-        jPanel5.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        totalCategory_Panel.setBackground(new java.awt.Color(18, 114, 137));
+        totalCategory_Panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(new java.awt.Color(102, 51, 255), null));
+        totalCategory_Panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                totalCategory_PanelMouseClicked(evt);
+            }
+        });
+        totalCategory_Panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jLabel25.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel25.setForeground(new java.awt.Color(255, 255, 255));
         jLabel25.setText("TOTAL CATEGORY");
-        jPanel5.add(jLabel25, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
+        totalCategory_Panel.add(jLabel25, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
 
         jPanel59.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2163,25 +2692,30 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel5.add(jPanel59, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
+        totalCategory_Panel.add(jPanel59, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
 
         totalCategory_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         totalCategory_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel5.add(totalCategory_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
+        totalCategory_Panel.add(totalCategory_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
 
         jLabel142.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/market-segment.png"))); // NOI18N
-        jPanel5.add(jLabel142, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        totalCategory_Panel.add(jLabel142, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel5, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 20, 210, 100));
+        DashboardPanel.add(totalCategory_Panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 20, 210, 100));
 
-        jPanel4.setBackground(new java.awt.Color(211, 69, 18));
-        jPanel4.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.orange, null));
-        jPanel4.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        totalSales_Panel.setBackground(new java.awt.Color(211, 69, 18));
+        totalSales_Panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.orange, null));
+        totalSales_Panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                totalSales_PanelMouseClicked(evt);
+            }
+        });
+        totalSales_Panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jLabel24.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel24.setForeground(new java.awt.Color(255, 255, 255));
         jLabel24.setText("TOTAL SALES");
-        jPanel4.add(jLabel24, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
+        totalSales_Panel.add(jLabel24, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
 
         jPanel57.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2196,20 +2730,25 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel4.add(jPanel57, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
+        totalSales_Panel.add(jPanel57, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
 
         totalSalesDashboard.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         totalSalesDashboard.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel4.add(totalSalesDashboard, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
+        totalSales_Panel.add(totalSalesDashboard, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
 
         jLabel147.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/sales.png"))); // NOI18N
-        jPanel4.add(jLabel147, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        totalSales_Panel.add(jLabel147, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel4, new org.netbeans.lib.awtextra.AbsoluteConstraints(620, 20, 210, 100));
+        DashboardPanel.add(totalSales_Panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(620, 20, 210, 100));
 
-        jPanel9.setBackground(new java.awt.Color(8, 124, 8));
-        jPanel9.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
-        jPanel9.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        transaction_panel.setBackground(new java.awt.Color(8, 124, 8));
+        transaction_panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
+        transaction_panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                transaction_panelMouseClicked(evt);
+            }
+        });
+        transaction_panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jPanel10.setBackground(new java.awt.Color(236, 240, 241));
         jPanel10.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
@@ -2224,12 +2763,12 @@ private void showCard(String name) {
         jLabel30.setText("20");
         jPanel10.add(jLabel30, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 30, -1, -1));
 
-        jPanel9.add(jPanel10, new org.netbeans.lib.awtextra.AbsoluteConstraints(570, 210, 160, 70));
+        transaction_panel.add(jPanel10, new org.netbeans.lib.awtextra.AbsoluteConstraints(570, 210, 160, 70));
 
         jLabel14.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel14.setForeground(new java.awt.Color(255, 255, 255));
         jLabel14.setText("TOTAL TRANSACTION");
-        jPanel9.add(jLabel14, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
+        transaction_panel.add(jLabel14, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
 
         jPanel60.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2244,25 +2783,30 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel9.add(jPanel60, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
+        transaction_panel.add(jPanel60, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
 
         totalTransaction_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         totalTransaction_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel9.add(totalTransaction_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
+        transaction_panel.add(totalTransaction_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
 
         jLabel149.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/card-payment.png"))); // NOI18N
-        jPanel9.add(jLabel149, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        transaction_panel.add(jLabel149, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel9, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 140, 210, 100));
+        DashboardPanel.add(transaction_panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(900, 140, 210, 100));
 
-        jPanel7.setBackground(new java.awt.Color(164, 88, 15));
-        jPanel7.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.yellow, null));
-        jPanel7.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        lowStock_Panel.setBackground(new java.awt.Color(164, 88, 15));
+        lowStock_Panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.yellow, null));
+        lowStock_Panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                lowStock_PanelMouseClicked(evt);
+            }
+        });
+        lowStock_Panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jLabel20.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel20.setForeground(new java.awt.Color(255, 255, 255));
         jLabel20.setText("LOW STOCK");
-        jPanel7.add(jLabel20, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 10, -1, -1));
+        lowStock_Panel.add(jLabel20, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 10, -1, -1));
 
         jPanel55.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2277,25 +2821,30 @@ private void showCard(String name) {
             .addGap(0, 112, Short.MAX_VALUE)
         );
 
-        jPanel7.add(jPanel55, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
+        lowStock_Panel.add(jPanel55, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
 
         lowstockDashboad_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         lowstockDashboad_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel7.add(lowstockDashboad_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
+        lowStock_Panel.add(lowstockDashboad_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
 
         jLabel145.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/stock-market.png"))); // NOI18N
-        jPanel7.add(jLabel145, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        lowStock_Panel.add(jLabel145, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel7, new org.netbeans.lib.awtextra.AbsoluteConstraints(350, 140, 210, 100));
+        DashboardPanel.add(lowStock_Panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(350, 140, 210, 100));
 
-        jPanel6.setBackground(new java.awt.Color(55, 73, 144));
-        jPanel6.setBorder(javax.swing.BorderFactory.createEtchedBorder(new java.awt.Color(0, 153, 255), null));
-        jPanel6.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        suppliers_panel.setBackground(new java.awt.Color(55, 73, 144));
+        suppliers_panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(new java.awt.Color(0, 153, 255), null));
+        suppliers_panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                suppliers_panelMouseClicked(evt);
+            }
+        });
+        suppliers_panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jLabel13.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel13.setForeground(new java.awt.Color(255, 255, 255));
         jLabel13.setText("TOTAL SUPPLIER");
-        jPanel6.add(jLabel13, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 10, -1, -1));
+        suppliers_panel.add(jLabel13, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 10, -1, -1));
 
         jPanel8.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2310,25 +2859,30 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel6.add(jPanel8, new org.netbeans.lib.awtextra.AbsoluteConstraints(40, 0, 1, -1));
+        suppliers_panel.add(jPanel8, new org.netbeans.lib.awtextra.AbsoluteConstraints(40, 0, 1, -1));
 
         totalSupplier_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         totalSupplier_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel6.add(totalSupplier_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 50, 160, 40));
+        suppliers_panel.add(totalSupplier_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 50, 160, 40));
 
         jLabel144.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/supplier (1).png"))); // NOI18N
-        jPanel6.add(jLabel144, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        suppliers_panel.add(jLabel144, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel6, new org.netbeans.lib.awtextra.AbsoluteConstraints(80, 140, 210, 100));
+        DashboardPanel.add(suppliers_panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(80, 140, 210, 100));
 
-        jPanel3.setBackground(new java.awt.Color(28, 111, 44));
-        jPanel3.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.green, null));
-        jPanel3.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        users_panel.setBackground(new java.awt.Color(28, 111, 44));
+        users_panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.green, null));
+        users_panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                users_panelMouseClicked(evt);
+            }
+        });
+        users_panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jLabel18.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel18.setForeground(new java.awt.Color(255, 255, 255));
         jLabel18.setText("TOTAL USERS");
-        jPanel3.add(jLabel18, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
+        users_panel.add(jLabel18, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
 
         jPanel56.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2343,20 +2897,25 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel3.add(jPanel56, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
+        users_panel.add(jPanel56, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
 
         totalUser_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         totalUser_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel3.add(totalUser_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
+        users_panel.add(totalUser_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
 
         jLabel146.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/team.png"))); // NOI18N
-        jPanel3.add(jLabel146, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        users_panel.add(jLabel146, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel3, new org.netbeans.lib.awtextra.AbsoluteConstraints(350, 20, 210, 100));
+        DashboardPanel.add(users_panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(350, 20, 210, 100));
 
-        jPanel53.setBackground(new java.awt.Color(164, 0, 0));
-        jPanel53.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
-        jPanel53.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        outOfStock_Panel.setBackground(new java.awt.Color(164, 0, 0));
+        outOfStock_Panel.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
+        outOfStock_Panel.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                outOfStock_PanelMouseClicked(evt);
+            }
+        });
+        outOfStock_Panel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         jPanel54.setBackground(new java.awt.Color(236, 240, 241));
         jPanel54.setBorder(javax.swing.BorderFactory.createEtchedBorder(java.awt.Color.blue, null));
@@ -2371,12 +2930,12 @@ private void showCard(String name) {
         jLabel133.setText("20");
         jPanel54.add(jLabel133, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 30, -1, -1));
 
-        jPanel53.add(jPanel54, new org.netbeans.lib.awtextra.AbsoluteConstraints(570, 210, 160, 70));
+        outOfStock_Panel.add(jPanel54, new org.netbeans.lib.awtextra.AbsoluteConstraints(570, 210, 160, 70));
 
         jLabel22.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel22.setForeground(new java.awt.Color(255, 255, 255));
         jLabel22.setText("OUT OF STOCK");
-        jPanel53.add(jLabel22, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
+        outOfStock_Panel.add(jLabel22, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, -1, -1));
 
         jPanel58.setBackground(new java.awt.Color(0, 0, 0));
 
@@ -2391,16 +2950,16 @@ private void showCard(String name) {
             .addGap(0, 100, Short.MAX_VALUE)
         );
 
-        jPanel53.add(jPanel58, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
+        outOfStock_Panel.add(jPanel58, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 0, 1, -1));
 
         outOfStockdashboard_lbl.setFont(new java.awt.Font("Segoe UI", 0, 24)); // NOI18N
         outOfStockdashboard_lbl.setForeground(new java.awt.Color(255, 255, 255));
-        jPanel53.add(outOfStockdashboard_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
+        outOfStock_Panel.add(outOfStockdashboard_lbl, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 50, 150, 40));
 
         jLabel148.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/out-of-stock (1).png"))); // NOI18N
-        jPanel53.add(jLabel148, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
+        outOfStock_Panel.add(jLabel148, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 30, -1));
 
-        DashboardPanel.add(jPanel53, new org.netbeans.lib.awtextra.AbsoluteConstraints(620, 140, 210, 100));
+        DashboardPanel.add(outOfStock_Panel, new org.netbeans.lib.awtextra.AbsoluteConstraints(620, 140, 210, 100));
 
         contentPanel.add(DashboardPanel, "dashboard");
 
@@ -2408,39 +2967,35 @@ private void showCard(String name) {
         posPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         headerPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
-        posPanel.add(headerPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 1170, 60));
+        posPanel.add(headerPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 1170, 70));
 
         barcodePanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
-        posPanel.add(barcodePanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 80, 1170, 70));
+        posPanel.add(barcodePanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 90, 1170, 70));
 
         cartPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
-        posPanel.add(cartPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 160, 750, 320));
+        posPanel.add(cartPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(210, 170, 610, 350));
 
-        javax.swing.GroupLayout paymentPanelLayout = new javax.swing.GroupLayout(paymentPanel);
-        paymentPanel.setLayout(paymentPanelLayout);
-        paymentPanelLayout.setHorizontalGroup(
-            paymentPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 410, Short.MAX_VALUE)
-        );
-        paymentPanelLayout.setVerticalGroup(
-            paymentPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 320, Short.MAX_VALUE)
-        );
+        paymentPanel.setLayout(new javax.swing.BoxLayout(paymentPanel, javax.swing.BoxLayout.LINE_AXIS));
+        posPanel.add(paymentPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(830, 170, 350, 420));
 
-        posPanel.add(paymentPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(770, 160, 410, 320));
+        buttonPanel.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
+        posPanel.add(buttonPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(380, 530, 440, 60));
 
-        javax.swing.GroupLayout buttonPanelLayout = new javax.swing.GroupLayout(buttonPanel);
-        buttonPanel.setLayout(buttonPanelLayout);
-        buttonPanelLayout.setHorizontalGroup(
-            buttonPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 470, Short.MAX_VALUE)
+        imagePanel.setBackground(new java.awt.Color(153, 153, 153));
+        imagePanel.setForeground(new java.awt.Color(153, 153, 153));
+
+        javax.swing.GroupLayout imagePanelLayout = new javax.swing.GroupLayout(imagePanel);
+        imagePanel.setLayout(imagePanelLayout);
+        imagePanelLayout.setHorizontalGroup(
+            imagePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGap(0, 190, Short.MAX_VALUE)
         );
-        buttonPanelLayout.setVerticalGroup(
-            buttonPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 60, Short.MAX_VALUE)
+        imagePanelLayout.setVerticalGroup(
+            imagePanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGap(0, 270, Short.MAX_VALUE)
         );
 
-        posPanel.add(buttonPanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(320, 510, 470, 60));
+        posPanel.add(imagePanel, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 170, 190, 270));
 
         contentPanel.add(posPanel, "pos");
 
@@ -2449,12 +3004,6 @@ private void showCard(String name) {
 
         jPanel13.setBackground(new java.awt.Color(248, 249, 250));
         jPanel13.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
-
-        jLabel35.setBackground(new java.awt.Color(0, 0, 0));
-        jLabel35.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
-        jLabel35.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel35.setText("Udpated At");
-        jPanel13.add(jLabel35, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 440, 90, 30));
 
         jPanel15.setBackground(new java.awt.Color(204, 204, 204));
 
@@ -2481,49 +3030,43 @@ private void showCard(String name) {
         jLabel40.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel40.setForeground(new java.awt.Color(0, 0, 0));
         jLabel40.setText("User ID");
-        jPanel13.add(jLabel40, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 50, 90, -1));
+        jPanel13.add(jLabel40, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 90, 90, -1));
 
         jLabel48.setBackground(new java.awt.Color(0, 0, 0));
         jLabel48.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel48.setForeground(new java.awt.Color(0, 0, 0));
         jLabel48.setText("Middle Name");
-        jPanel13.add(jLabel48, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 130, 90, 30));
+        jPanel13.add(jLabel48, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 160, 90, 30));
 
         jLabel49.setBackground(new java.awt.Color(0, 0, 0));
         jLabel49.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel49.setForeground(new java.awt.Color(0, 0, 0));
         jLabel49.setText("Last Name");
-        jPanel13.add(jLabel49, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 170, 90, 30));
+        jPanel13.add(jLabel49, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 200, 90, 30));
 
         jLabel50.setBackground(new java.awt.Color(0, 0, 0));
         jLabel50.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel50.setForeground(new java.awt.Color(0, 0, 0));
         jLabel50.setText("Username");
-        jPanel13.add(jLabel50, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 210, 90, 30));
+        jPanel13.add(jLabel50, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 240, 90, 30));
 
         jLabel51.setBackground(new java.awt.Color(0, 0, 0));
         jLabel51.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel51.setForeground(new java.awt.Color(0, 0, 0));
         jLabel51.setText("Confirm Password");
-        jPanel13.add(jLabel51, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 280, 120, 50));
+        jPanel13.add(jLabel51, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 310, 120, 50));
 
         jLabel52.setBackground(new java.awt.Color(0, 0, 0));
         jLabel52.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel52.setForeground(new java.awt.Color(0, 0, 0));
         jLabel52.setText("Role:");
-        jPanel13.add(jLabel52, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 320, 90, 50));
+        jPanel13.add(jLabel52, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 350, 90, 50));
 
         jLabel53.setBackground(new java.awt.Color(0, 0, 0));
         jLabel53.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel53.setForeground(new java.awt.Color(0, 0, 0));
         jLabel53.setText("Status:");
-        jPanel13.add(jLabel53, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 360, 90, 50));
-
-        jLabel54.setBackground(new java.awt.Color(0, 0, 0));
-        jLabel54.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
-        jLabel54.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel54.setText("Created At");
-        jPanel13.add(jLabel54, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 410, 90, 30));
+        jPanel13.add(jLabel53, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 390, 90, 50));
 
         middlename_txt.setBackground(new java.awt.Color(255, 255, 255));
         middlename_txt.setForeground(new java.awt.Color(0, 0, 0));
@@ -2532,7 +3075,7 @@ private void showCard(String name) {
                 middlename_txtKeyTyped(evt);
             }
         });
-        jPanel13.add(middlename_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 130, 300, 30));
+        jPanel13.add(middlename_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 160, 300, 30));
 
         lastname_txt.setBackground(new java.awt.Color(255, 255, 255));
         lastname_txt.addKeyListener(new java.awt.event.KeyAdapter() {
@@ -2540,37 +3083,25 @@ private void showCard(String name) {
                 lastname_txtKeyTyped(evt);
             }
         });
-        jPanel13.add(lastname_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 170, 300, 30));
+        jPanel13.add(lastname_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 200, 300, 30));
 
         username_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel13.add(username_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 210, 300, 30));
+        jPanel13.add(username_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 240, 300, 30));
 
         role_cmb.setBackground(new java.awt.Color(255, 255, 255));
         role_cmb.setForeground(new java.awt.Color(0, 0, 0));
-        role_cmb.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "Super Admin", "Manager", "Cashier", "Inventory Clerk" }));
-        jPanel13.add(role_cmb, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 330, 300, 30));
+        role_cmb.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "Admin", "Manager", "Cashier", "Inventory Clerk" }));
+        jPanel13.add(role_cmb, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 360, 300, 30));
 
         status_cmb.setBackground(new java.awt.Color(255, 255, 255));
         status_cmb.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "Active", "Inactive" }));
-        jPanel13.add(status_cmb, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 370, 300, 30));
-
-        updatedat_txt.setEditable(false);
-        updatedat_txt.setBackground(new java.awt.Color(255, 255, 255));
-        updatedat_txt.setHorizontalAlignment(javax.swing.JTextField.CENTER);
-        updatedat_txt.setText("[Auto]");
-        jPanel13.add(updatedat_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 450, 300, 30));
+        jPanel13.add(status_cmb, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 400, 300, 30));
 
         userID_txt.setEditable(false);
         userID_txt.setBackground(new java.awt.Color(255, 255, 255));
         userID_txt.setHorizontalAlignment(javax.swing.JTextField.CENTER);
         userID_txt.setText("[Auto]");
-        jPanel13.add(userID_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(380, 50, 80, 30));
-
-        createdAt_txt.setEditable(false);
-        createdAt_txt.setBackground(new java.awt.Color(255, 255, 255));
-        createdAt_txt.setHorizontalAlignment(javax.swing.JTextField.CENTER);
-        createdAt_txt.setText("[Auto]");
-        jPanel13.add(createdAt_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 410, 300, 30));
+        jPanel13.add(userID_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(410, 80, 50, 30));
 
         addUser_btn.setBackground(new java.awt.Color(6, 75, 9));
         addUser_btn.setForeground(new java.awt.Color(255, 255, 255));
@@ -2580,7 +3111,7 @@ private void showCard(String name) {
                 addUser_btnActionPerformed(evt);
             }
         });
-        jPanel13.add(addUser_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 510, 100, 40));
+        jPanel13.add(addUser_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 480, 100, 40));
 
         update_btn.setBackground(new java.awt.Color(5, 59, 114));
         update_btn.setText("UPDATE");
@@ -2589,7 +3120,7 @@ private void showCard(String name) {
                 update_btnActionPerformed(evt);
             }
         });
-        jPanel13.add(update_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(140, 510, 100, 40));
+        jPanel13.add(update_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(140, 480, 100, 40));
 
         delete_btn.setBackground(new java.awt.Color(128, 0, 16));
         delete_btn.setText("DELETE");
@@ -2598,7 +3129,7 @@ private void showCard(String name) {
                 delete_btnActionPerformed(evt);
             }
         });
-        jPanel13.add(delete_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(250, 510, 100, 40));
+        jPanel13.add(delete_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(250, 480, 100, 40));
 
         clear_btn.setBackground(new java.awt.Color(154, 154, 147));
         clear_btn.setText("CLEAR");
@@ -2607,16 +3138,34 @@ private void showCard(String name) {
                 clear_btnActionPerformed(evt);
             }
         });
-        jPanel13.add(clear_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(360, 510, 100, 40));
+        jPanel13.add(clear_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(360, 480, 100, 40));
+
+        ConfirmpasswordToggle_btn.setBackground(new java.awt.Color(255, 255, 255));
+        ConfirmpasswordToggle_btn.setIcon(new javax.swing.ImageIcon(getClass().getResource("/view.png"))); // NOI18N
+        ConfirmpasswordToggle_btn.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                ConfirmpasswordToggle_btnActionPerformed(evt);
+            }
+        });
+        jPanel13.add(ConfirmpasswordToggle_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(430, 320, 30, 30));
+
+        passwordToggle_btn.setBackground(new java.awt.Color(255, 255, 255));
+        passwordToggle_btn.setIcon(new javax.swing.ImageIcon(getClass().getResource("/view.png"))); // NOI18N
+        passwordToggle_btn.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                passwordToggle_btnActionPerformed(evt);
+            }
+        });
+        jPanel13.add(passwordToggle_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(430, 280, 30, 30));
 
         password_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel13.add(password_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 250, 300, 30));
+        jPanel13.add(password_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 280, 300, 30));
 
         jLabel55.setBackground(new java.awt.Color(0, 0, 0));
         jLabel55.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel55.setForeground(new java.awt.Color(0, 0, 0));
         jLabel55.setText("First Name");
-        jPanel13.add(jLabel55, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 90, 90, 30));
+        jPanel13.add(jLabel55, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 120, 90, 30));
 
         firstname_txt1.setBackground(new java.awt.Color(255, 255, 255));
         firstname_txt1.addKeyListener(new java.awt.event.KeyAdapter() {
@@ -2624,7 +3173,7 @@ private void showCard(String name) {
                 firstname_txt1KeyTyped(evt);
             }
         });
-        jPanel13.add(firstname_txt1, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 90, 300, 30));
+        jPanel13.add(firstname_txt1, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 120, 300, 30));
 
         confirmPass_txt.setBackground(new java.awt.Color(255, 255, 255));
         confirmPass_txt.addKeyListener(new java.awt.event.KeyAdapter() {
@@ -2632,13 +3181,13 @@ private void showCard(String name) {
                 confirmPass_txtKeyReleased(evt);
             }
         });
-        jPanel13.add(confirmPass_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 290, 300, 30));
+        jPanel13.add(confirmPass_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(160, 320, 300, 30));
 
         jLabel57.setBackground(new java.awt.Color(0, 0, 0));
         jLabel57.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel57.setForeground(new java.awt.Color(0, 0, 0));
         jLabel57.setText("Password");
-        jPanel13.add(jLabel57, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 240, 90, 50));
+        jPanel13.add(jLabel57, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 270, 90, 50));
 
         userPanel.add(jPanel13, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 20, 480, 560));
 
@@ -2674,7 +3223,7 @@ private void showCard(String name) {
                 role_cmb1ActionPerformed(evt);
             }
         });
-        jPanel14.add(role_cmb1, new org.netbeans.lib.awtextra.AbsoluteConstraints(450, 60, 190, 30));
+        jPanel14.add(role_cmb1, new org.netbeans.lib.awtextra.AbsoluteConstraints(450, 60, 190, 40));
 
         user_tbl.setBackground(new java.awt.Color(255, 255, 255));
         user_tbl.setModel(new javax.swing.table.DefaultTableModel(
@@ -2707,16 +3256,16 @@ private void showCard(String name) {
             user_tbl.getColumnModel().getColumn(5).setResizable(false);
         }
 
-        jPanel14.add(jScrollPane2, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 120, 640, 430));
+        jPanel14.add(jScrollPane2, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 120, 640, 410));
 
         jLabel47.setBackground(new java.awt.Color(0, 0, 0));
         jLabel47.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel47.setForeground(new java.awt.Color(0, 0, 0));
         jLabel47.setText("Role");
-        jPanel14.add(jLabel47, new org.netbeans.lib.awtextra.AbsoluteConstraints(410, 60, 40, 30));
+        jPanel14.add(jLabel47, new org.netbeans.lib.awtextra.AbsoluteConstraints(410, 60, 40, 40));
 
         jLabel150.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/search (2).png"))); // NOI18N
-        jPanel14.add(jLabel150, new org.netbeans.lib.awtextra.AbsoluteConstraints(360, 60, 30, 30));
+        jPanel14.add(jLabel150, new org.netbeans.lib.awtextra.AbsoluteConstraints(360, 60, 30, 40));
 
         searchUser_txt.setBackground(new java.awt.Color(255, 255, 255));
         searchUser_txt.addKeyListener(new java.awt.event.KeyAdapter() {
@@ -2724,13 +3273,13 @@ private void showCard(String name) {
                 searchUser_txtKeyReleased(evt);
             }
         });
-        jPanel14.add(searchUser_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 60, 320, 30));
+        jPanel14.add(searchUser_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 60, 320, 40));
 
         jLabel56.setBackground(new java.awt.Color(0, 0, 0));
         jLabel56.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel56.setForeground(new java.awt.Color(0, 0, 0));
         jLabel56.setText("Search");
-        jPanel14.add(jLabel56, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 60, 50, 30));
+        jPanel14.add(jLabel56, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 60, 50, 40));
 
         userPanel.add(jPanel14, new org.netbeans.lib.awtextra.AbsoluteConstraints(510, 20, 660, 560));
 
@@ -2888,7 +3437,7 @@ private void showCard(String name) {
         jPanel19.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
 
         supplierName_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel19.add(supplierName_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 80, 390, 30));
+        jPanel19.add(supplierName_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 70, 390, 40));
 
         jLabel44.setFont(new java.awt.Font("Segoe UI", 0, 18)); // NOI18N
         jLabel44.setForeground(new java.awt.Color(0, 0, 0));
@@ -2897,10 +3446,10 @@ private void showCard(String name) {
 
         jLabel45.setForeground(new java.awt.Color(0, 0, 0));
         jLabel45.setText("Supplier Name:");
-        jPanel19.add(jLabel45, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 60, 90, -1));
+        jPanel19.add(jLabel45, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 50, 90, -1));
 
         contactPerson_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel19.add(contactPerson_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 140, 390, 30));
+        jPanel19.add(contactPerson_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 140, 390, 40));
 
         jLabel46.setForeground(new java.awt.Color(0, 0, 0));
         jLabel46.setText("Contact Person:");
@@ -2912,45 +3461,25 @@ private void showCard(String name) {
                 contactNumber_txtKeyTyped(evt);
             }
         });
-        jPanel19.add(contactNumber_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 200, 390, 30));
+        jPanel19.add(contactNumber_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 220, 390, 40));
 
         jLabel58.setForeground(new java.awt.Color(0, 0, 0));
         jLabel58.setText("Contact Number:");
-        jPanel19.add(jLabel58, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 180, 110, -1));
+        jPanel19.add(jLabel58, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 200, 110, -1));
 
         email_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel19.add(email_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 260, 390, 30));
+        jPanel19.add(email_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 300, 390, 40));
 
         jLabel59.setForeground(new java.awt.Color(0, 0, 0));
         jLabel59.setText("Email:");
-        jPanel19.add(jLabel59, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 240, 110, -1));
+        jPanel19.add(jLabel59, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 280, 110, -1));
 
         address_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel19.add(address_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 320, 390, 30));
+        jPanel19.add(address_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 380, 390, 40));
 
         jLabel60.setForeground(new java.awt.Color(0, 0, 0));
         jLabel60.setText("Address:");
-        jPanel19.add(jLabel60, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 300, 110, -1));
-
-        jLabel61.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel61.setText("Updated At");
-        jPanel19.add(jLabel61, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 420, 70, 20));
-
-        updatedat_txt2.setEditable(false);
-        updatedat_txt2.setBackground(new java.awt.Color(255, 255, 255));
-        updatedat_txt2.setHorizontalAlignment(javax.swing.JTextField.CENTER);
-        updatedat_txt2.setText("[Auto]");
-        jPanel19.add(updatedat_txt2, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 440, 390, 30));
-
-        jLabel62.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel62.setText("Created At");
-        jPanel19.add(jLabel62, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 360, 70, -1));
-
-        createAt_txt3.setEditable(false);
-        createAt_txt3.setBackground(new java.awt.Color(255, 255, 255));
-        createAt_txt3.setHorizontalAlignment(javax.swing.JTextField.CENTER);
-        createAt_txt3.setText("[Auto]");
-        jPanel19.add(createAt_txt3, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 380, 390, 30));
+        jPanel19.add(jLabel60, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 360, 110, -1));
 
         ClearSupplier_btn.setBackground(new java.awt.Color(154, 154, 147));
         ClearSupplier_btn.setForeground(new java.awt.Color(255, 255, 255));
@@ -2960,7 +3489,7 @@ private void showCard(String name) {
                 ClearSupplier_btnActionPerformed(evt);
             }
         });
-        jPanel19.add(ClearSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(310, 490, 90, 30));
+        jPanel19.add(ClearSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(310, 480, 90, 30));
 
         addSupplier_btn.setBackground(new java.awt.Color(6, 75, 9));
         addSupplier_btn.setForeground(new java.awt.Color(255, 255, 255));
@@ -2970,7 +3499,7 @@ private void showCard(String name) {
                 addSupplier_btnActionPerformed(evt);
             }
         });
-        jPanel19.add(addSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 490, 90, 30));
+        jPanel19.add(addSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 480, 90, 30));
 
         UpdateSupplier_btn.setBackground(new java.awt.Color(5, 59, 114));
         UpdateSupplier_btn.setText("UPDATE");
@@ -2979,7 +3508,7 @@ private void showCard(String name) {
                 UpdateSupplier_btnActionPerformed(evt);
             }
         });
-        jPanel19.add(UpdateSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(110, 490, 90, 30));
+        jPanel19.add(UpdateSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(110, 480, 90, 30));
 
         deleteSupplier_btn.setBackground(new java.awt.Color(128, 0, 16));
         deleteSupplier_btn.setForeground(new java.awt.Color(255, 255, 255));
@@ -2989,7 +3518,7 @@ private void showCard(String name) {
                 deleteSupplier_btnActionPerformed(evt);
             }
         });
-        jPanel19.add(deleteSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(210, 490, 90, 30));
+        jPanel19.add(deleteSupplier_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(210, 480, 90, 30));
 
         supplierPanel.add(jPanel19, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 10, 420, 570));
 
@@ -4111,8 +4640,18 @@ private void showCard(String name) {
 
         jLabel116.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel116.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel116.setText("Search:");
-        StockMovementJ.add(jLabel116, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 60, 50, 30));
+        jLabel116.setText("Stock:");
+        StockMovementJ.add(jLabel116, new org.netbeans.lib.awtextra.AbsoluteConstraints(490, 60, 50, 30));
+
+        jLabel158.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
+        jLabel158.setForeground(new java.awt.Color(0, 0, 0));
+        jLabel158.setText("Search:");
+        StockMovementJ.add(jLabel158, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 60, 50, 30));
+
+        stocksType_cmb.setBackground(new java.awt.Color(255, 255, 255));
+        stocksType_cmb.setForeground(new java.awt.Color(0, 0, 0));
+        stocksType_cmb.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "All", "Low Stock", "Out Of Stock", "In Stock" }));
+        StockMovementJ.add(stocksType_cmb, new org.netbeans.lib.awtextra.AbsoluteConstraints(540, 60, 190, 30));
 
         jtablePanel.add(StockMovementJ, "StockMovementJ");
 
@@ -4464,6 +5003,7 @@ private void showCard(String name) {
     private void SalesHistoryPanelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_SalesHistoryPanelMouseClicked
         // TODO add your handling code here:
         showCard("salesHistory");
+        applySalesHistoryFilters();
     }//GEN-LAST:event_SalesHistoryPanelMouseClicked
 
     private void InventoryPanelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_InventoryPanelMouseClicked
@@ -4573,8 +5113,7 @@ private void showCard(String name) {
     }//GEN-LAST:event_UsersPanelMouseExited
 
     private void addUser_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_addUser_btnActionPerformed
-        // TODO add your handling code here:
-          String idText = userID_txt.getText().trim(); // your User ID textfield
+        String idText = userID_txt.getText().trim();
         String first = firstname_txt1.getText().trim();
         String middle = middlename_txt.getText().trim();
         String last = lastname_txt.getText().trim();
@@ -4584,8 +5123,7 @@ private void showCard(String name) {
         String role = role_cmb.getSelectedItem().toString();
         String status = status_cmb.getSelectedItem().toString();
 
-        // if selected/edit mode, do not allow add
-        if (!idText.isEmpty() && !idText.equalsIgnoreCase("[Auto]")) {
+        if (isEditMode || (!idText.isEmpty() && !idText.equalsIgnoreCase("[Auto]"))) {
             JOptionPane.showMessageDialog(
                     this,
                     "You selected an existing user. Click CLEAR first if you want to add a new user.",
@@ -4616,6 +5154,45 @@ private void showCard(String name) {
         }
 
         Users user = new Users();
+
+        if (user.isUsernameExists(username, -1)) {
+            JOptionPane.showMessageDialog(this,
+                    "Username already exists. Please use another username.",
+                    "Duplicate Username",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (user.isFullNameExists(first, middle, last, -1)) {
+            JOptionPane.showMessageDialog(this,
+                    "User already exists with the same full name.",
+                    "Duplicate User",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (user.isFirstLastNameExists(first, last, -1)) {
+            int proceed = JOptionPane.showConfirmDialog(
+                    this,
+                    "The first name and last name already exist. Do you want to proceed?",
+                    "Possible Duplicate Name",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+
+            if (proceed != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+
+        if ("Super Admin".equals(role) && user.isSuperAdminExists()) {
+            JOptionPane.showMessageDialog(this,
+                    "Only one Super Admin account is allowed in the system.",
+                    "Super Admin Restricted",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
         boolean added = user.addUser(first, middle, last, username, password, role, status);
 
         if (added) {
@@ -4627,12 +5204,60 @@ private void showCard(String name) {
     private void update_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_update_btnActionPerformed
         int row = user_tbl.getSelectedRow();
 
-        if (row == -1) {
-            JOptionPane.showMessageDialog(this, "Please select a user first.");
+        Users user = new Users();
+
+        if (!isEditMode) {
+            if (row == -1) {
+                JOptionPane.showMessageDialog(this, "Please select a user first.");
+                return;
+            }
+
+            selectedUserId = Integer.parseInt(user_tbl.getValueAt(row, 0).toString());
+            Users.UserDetails details = user.getUserById(selectedUserId);
+
+            if (details == null) {
+                JOptionPane.showMessageDialog(this, "Unable to load the selected user.");
+                return;
+            }
+
+            userID_txt.setText(String.valueOf(details.userId));
+            firstname_txt1.setText(details.firstName == null ? "" : details.firstName);
+            middlename_txt.setText(details.middleName == null ? "" : details.middleName);
+            lastname_txt.setText(details.lastName == null ? "" : details.lastName);
+            username_txt.setText(details.username == null ? "" : details.username);
+            password_txt.setText("");
+            confirmPass_txt.setText("");
+            confirmPass_txt.setForeground(java.awt.Color.BLACK);
+            status_cmb.setSelectedItem(details.status);
+            createdAt_txt1.setText(details.createdAt == null ? "[Auto]" : details.createdAt);
+            updatedat_txt1.setText(details.updatedAt == null ? "[Auto]" : details.updatedAt);
+
+            isEditMode = true;
+            addUser_btn.setEnabled(false);
+            update_btn.setText("SAVE");
+            firstname_txt1.requestFocus();
+
+            if ("Super Admin".equals(loggedInRole) && "Super Admin".equals(details.role)) {
+                role_cmb.removeAllItems();
+                role_cmb.addItem("Super Admin");
+                role_cmb.setEnabled(false);
+            } else {
+                role_cmb.setEnabled(true);
+                role_cmb.removeAllItems();
+                role_cmb.addItem("Super Admin");
+                role_cmb.addItem("Admin");
+                role_cmb.addItem("Cashier");
+                role_cmb.addItem("Inventory Clerk");
+                role_cmb.addItem("Manager");
+                role_cmb.setSelectedItem(details.role);
+            }
             return;
         }
 
-        int id = Integer.parseInt(user_tbl.getValueAt(row, 0).toString());
+        if (selectedUserId <= 0) {
+            JOptionPane.showMessageDialog(this, "Please select a user first.");
+            return;
+        }
 
         String first = firstname_txt1.getText().trim();
         String middle = middlename_txt.getText().trim();
@@ -4649,15 +5274,63 @@ private void showCard(String name) {
             return;
         }
 
-        // only check confirm if user typed a new password
         if (!password.isEmpty() && !password.equals(confirm)) {
             JOptionPane.showMessageDialog(this,
                     "Password and confirm password do not match.");
             return;
         }
 
-        Users user = new Users();
-        boolean updated = user.updateUser(id, first, middle, last, username, password, role, status);
+        if (user.isUsernameExists(username, selectedUserId)) {
+            JOptionPane.showMessageDialog(this,
+                    "Username already exists. Please use another username.",
+                    "Duplicate Username",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (user.isFullNameExists(first, middle, last, selectedUserId)) {
+            JOptionPane.showMessageDialog(this,
+                    "User already exists with the same full name.",
+                    "Duplicate User",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (user.isFirstLastNameExists(first, last, selectedUserId)) {
+            int proceed = JOptionPane.showConfirmDialog(
+                    this,
+                    "The first name and last name already exist. Do you want to proceed?",
+                    "Possible Duplicate Name",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+
+            if (proceed != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+
+        Users.UserDetails currentDetails = user.getUserById(selectedUserId);
+        if ("Super Admin".equals(role)
+                && currentDetails != null
+                && !"Super Admin".equals(currentDetails.role)
+                && user.isSuperAdminExists()) {
+            JOptionPane.showMessageDialog(this,
+                    "Only one Super Admin account is allowed in the system.",
+                    "Super Admin Restricted",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if ("Admin".equals(loggedInRole) && "Super Admin".equals(currentDetails.role)) {
+            JOptionPane.showMessageDialog(this,
+                    "Admins are not allowed to edit Super Admin credentials.",
+                    "Access Denied",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        boolean updated = user.updateUser(selectedUserId, first, middle, last, username, password, role, status);
 
         if (updated) {
             user.loadUsers(user_tbl);
@@ -4666,12 +5339,30 @@ private void showCard(String name) {
     }//GEN-LAST:event_update_btnActionPerformed
 
     private void delete_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_delete_btnActionPerformed
-        // TODO add your handling code here:
-        
         int row = user_tbl.getSelectedRow();
 
         if (row == -1) {
             JOptionPane.showMessageDialog(this, "Select user first");
+            return;
+        }
+
+        int id = Integer.parseInt(user_tbl.getValueAt(row, 0).toString());
+        Users user = new Users();
+        Users.UserDetails details = user.getUserById(id);
+
+        if (details != null && "Super Admin".equals(details.role)) {
+            JOptionPane.showMessageDialog(this,
+                    "Super Admin account cannot be deleted.",
+                    "Delete Blocked",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if ("Admin".equals(loggedInRole) && "Super Admin".equals(details.role)) {
+            JOptionPane.showMessageDialog(this,
+                    "Admins are not allowed to delete Super Admin accounts.",
+                    "Access Denied",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -4683,15 +5374,10 @@ private void showCard(String name) {
         );
 
         if (confirm == JOptionPane.YES_OPTION) {
-
-            int id = Integer.parseInt(user_tbl.getValueAt(row, 0).toString());
-
-            Users user = new Users();
-            user.deleteUser(id);
-
-            user.loadUsers(user_tbl);
-
-            clearFields();
+            if (user.deleteUser(id)) {
+                user.loadUsers(user_tbl);
+                clearFields();
+            }
         }
     }//GEN-LAST:event_delete_btnActionPerformed
 
@@ -4749,38 +5435,10 @@ private void showCard(String name) {
     }//GEN-LAST:event_confirmPass_txtKeyReleased
 
     private void user_tblMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_user_tblMouseClicked
-        // TODO add your handling code here:
-        if (evt.getClickCount() == 2) {
-            int row = user_tbl.getSelectedRow();
-
-            if (row == -1) {
-                return;
-            }
-
-            int userId = Integer.parseInt(user_tbl.getValueAt(row, 0).toString());
-
-            Users user = new Users();
-            Users.UserDetails details = user.getUserById(userId);
-
-            if (details != null) {
-                userID_txt.setText(String.valueOf(details.userId));
-                firstname_txt1.setText(details.firstName == null ? "" : details.firstName);
-                middlename_txt.setText(details.middleName == null ? "" : details.middleName);
-                lastname_txt.setText(details.lastName == null ? "" : details.lastName);
-                username_txt.setText(details.username == null ? "" : details.username);
-
-                // leave password blank during edit
-                password_txt.setText("");
-                confirmPass_txt.setText("");
-
-                role_cmb.setSelectedItem(details.role);
-                status_cmb.setSelectedItem(details.status);
-
-                createdAt_txt1.setText(details.createdAt == null ? "[Auto]" : details.createdAt);
-                updatedat_txt1.setText(details.updatedAt == null ? "[Auto]" : details.updatedAt);
-            }
+        if (isEditMode) {
+            return;
         }
-    
+
     }//GEN-LAST:event_user_tblMouseClicked
 
     private void searchUser_txtKeyReleased(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_searchUser_txtKeyReleased
@@ -4812,6 +5470,14 @@ private void showCard(String name) {
         }
 
         Category cat = new Category();
+        
+        // Check for duplicate category name
+        if (cat.isCategoryNameExists(name)) {
+            JOptionPane.showMessageDialog(this, "Category name already exists!");
+            categoryName_txt.setBackground(new Color(255, 102, 102));
+            return;
+        }
+
         cat.addCategory(name, desc);
         cat.loadCategories(Category_tbl);
 
@@ -4819,12 +5485,19 @@ private void showCard(String name) {
 
         categoryName_txt.setText("");
         Description_txt.setText("");
+        categoryName_txt.setBackground(Color.white);
     }//GEN-LAST:event_addCategory_btnActionPerformed
 
     private void clearCategory_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_clearCategory_btnActionPerformed
         // TODO add your handling code here:
         categoryName_txt.setText("");
         Description_txt.setText("");
+        categoryName_txt.setBackground(Color.white);
+
+        // Reset button states
+        addCategory_btn.setEnabled(true);
+        deleteCategory_btn.setEnabled(true);
+        categoryEditMode = false;
 
         JOptionPane.showMessageDialog(this, "Fields cleared!");
     }//GEN-LAST:event_clearCategory_btnActionPerformed
@@ -4846,21 +5519,44 @@ private void showCard(String name) {
 
             categoryEditMode = true;
 
+            // Disable add and delete buttons when in update mode
+            addCategory_btn.setEnabled(false);
+            deleteCategory_btn.setEnabled(false);
+
             JOptionPane.showMessageDialog(this, "Edit mode enabled. You can now edit the category.");
 
         } else {
 
             int id = Integer.parseInt(Category_tbl.getValueAt(row, 0).toString());
 
-            String name = categoryName_txt.getText();
-            String desc = Description_txt.getText();
+            String name = categoryName_txt.getText().trim();
+            String desc = Description_txt.getText().trim();
+
+            if (name.isEmpty() || desc.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Please fill in all required fields.");
+                return;
+            }
 
             Category cat = new Category();
+            
+            // Check for duplicate category name (excluding current category)
+            String oldName = Category_tbl.getValueAt(row, 1).toString();
+            if (cat.isCategoryNameExists(name, oldName)) {
+                JOptionPane.showMessageDialog(this, "Category name already exists!");
+                categoryName_txt.setBackground(new Color(255, 102, 102));
+                return;
+            }
+
             cat.updateCategory(id, name, desc);
 
             cat.loadCategories(Category_tbl);
 
             categoryEditMode = false;
+
+            // Re-enable add and delete buttons
+            addCategory_btn.setEnabled(true);
+            deleteCategory_btn.setEnabled(true);
+            categoryName_txt.setBackground(Color.white);
 
         }
 
@@ -4868,7 +5564,6 @@ private void showCard(String name) {
 
     private void deleteCategory_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_deleteCategory_btnActionPerformed
         // TODO add your handling code here:
-       
         int row = Category_tbl.getSelectedRow();
 
         if (row == -1) {
@@ -4889,9 +5584,7 @@ private void showCard(String name) {
 
             Category cat = new Category();
             cat.deleteCategory(id);
-
             cat.loadCategories(Category_tbl);
-
         }
         
     }//GEN-LAST:event_deleteCategory_btnActionPerformed
@@ -4906,16 +5599,17 @@ private void showCard(String name) {
 
     private void ClearSupplier_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_ClearSupplier_btnActionPerformed
         // TODO add your handling code here:
-        
         supplierName_txt.setText("");
         contactPerson_txt.setText("");
         contactNumber_txt.setText("");
         email_txt.setText("");
         address_txt.setText("");
-        createAt_txt3.setText("");
-        updatedat_txt2.setText("");
         supplierSearch_txt.setText("");
-
+        
+        // Reset background color and button states
+        supplierName_txt.setBackground(Color.white);
+        addSupplier_btn.setEnabled(true);
+        deleteSupplier_btn.setEnabled(true);
         supplierEditMode = false;
 
         JOptionPane.showMessageDialog(this, "Fields cleared.");
@@ -4936,13 +5630,13 @@ private void showCard(String name) {
             return;
         }
 
-        if (!isNumbersOnly(contactNumber)) {
-            JOptionPane.showMessageDialog(this, "Contact number must contain numbers only.");
+        if (!isValidPhilippineContactNumber(contactNumber)) {
+            JOptionPane.showMessageDialog(this, "Contact number must be exactly 11 digits starting with '09' (e.g., 09123456789).");
             return;
         }
 
-        if (!isValidEmail(email) || email.contains(" ")) {
-            JOptionPane.showMessageDialog(this, "Please enter a valid email address.");
+        if (!isValidEmail(email)) {
+            JOptionPane.showMessageDialog(this, "Please enter a valid email address (e.g., user@domain.com).");
             return;
         }
 
@@ -4955,6 +5649,14 @@ private void showCard(String name) {
 
         if (confirm == JOptionPane.YES_OPTION) {
             Supplier sup = new Supplier();
+            
+            // Check for duplicate supplier name
+            if (sup.isSupplierNameExists(name)) {
+                JOptionPane.showMessageDialog(this, "Supplier name already exists!");
+                supplierName_txt.setBackground(new Color(255, 102, 102));
+                return;
+            }
+            
             sup.addSupplier(name, contactPerson, contactNumber, email, address);
             sup.loadSuppliers(supplier_tbl);
 
@@ -4963,8 +5665,7 @@ private void showCard(String name) {
             contactNumber_txt.setText("");
             email_txt.setText("");
             address_txt.setText("");
-            createAt_txt3.setText("");
-            updatedat_txt2.setText("");
+            supplierName_txt.setBackground(Color.white);
         }
         refreshProductCombos();
     }//GEN-LAST:event_addSupplier_btnActionPerformed
@@ -4992,13 +5693,12 @@ private void showCard(String name) {
             email_txt.setText(oldEmail);
             address_txt.setText(oldAddress);
 
-            Object createdObj = supplier_tbl.getValueAt(row, 5);
-            createAt_txt3.setText(createdObj == null ? "" : createdObj.toString());
-
-            Object updatedObj = supplier_tbl.getValueAt(row, 6);
-            updatedat_txt2.setText(updatedObj == null ? "" : updatedObj.toString());
 
             supplierEditMode = true;
+
+            // Disable add and delete buttons when in update mode
+            addSupplier_btn.setEnabled(false);
+            deleteSupplier_btn.setEnabled(false);
 
             JOptionPane.showMessageDialog(this, "Edit mode enabled. You can now edit the supplier.");
 
@@ -5015,13 +5715,13 @@ private void showCard(String name) {
                 return;
             }
 
-            if (!isNumbersOnly(contactNumber)) {
-                JOptionPane.showMessageDialog(this, "Contact number must contain numbers only.");
+            if (!isValidPhilippineContactNumber(contactNumber)) {
+                JOptionPane.showMessageDialog(this, "Contact number must be exactly 11 digits starting with '09' (e.g., 09123456789).");
                 return;
             }
 
-            if (!isValidEmail(email) || email.contains(" ")) {
-                JOptionPane.showMessageDialog(this, "Please enter a valid email address.");
+            if (!isValidEmail(email)) {
+                JOptionPane.showMessageDialog(this, "Please enter a valid email address (e.g., user@domain.com).");
                 return;
             }
 
@@ -5034,6 +5734,14 @@ private void showCard(String name) {
 
             if (confirm == JOptionPane.YES_OPTION) {
                 Supplier sup = new Supplier();
+                
+                // Check for duplicate supplier name (excluding current supplier)
+                if (sup.isSupplierNameExists(name, oldSupplierName)) {
+                    JOptionPane.showMessageDialog(this, "Supplier name already exists!");
+                    supplierName_txt.setBackground(new Color(255, 102, 102));
+                    return;
+                }
+                
                 sup.updateSupplier(
                         oldSupplierName, oldContactPerson, oldContactNumber, oldEmail, oldAddress,
                         name, contactPerson, contactNumber, email, address
@@ -5042,13 +5750,17 @@ private void showCard(String name) {
 
                 supplierEditMode = false;
 
+                // Re-enable add and delete buttons
+                addSupplier_btn.setEnabled(true);
+                deleteSupplier_btn.setEnabled(true);
+                supplierName_txt.setBackground(Color.white);
+
                 supplierName_txt.setText("");
                 contactPerson_txt.setText("");
                 contactNumber_txt.setText("");
                 email_txt.setText("");
                 address_txt.setText("");
-                createAt_txt3.setText("");
-                updatedat_txt2.setText("");
+
 
                 oldSupplierName = "";
                 oldContactPerson = "";
@@ -5092,8 +5804,7 @@ private void showCard(String name) {
             contactNumber_txt.setText("");
             email_txt.setText("");
             address_txt.setText("");
-            createAt_txt3.setText("");
-            updatedat_txt2.setText("");
+       
             supplierSearch_txt.setText("");
 
             supplierEditMode = false;
@@ -5111,9 +5822,24 @@ private void showCard(String name) {
     private void contactNumber_txtKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_contactNumber_txtKeyTyped
         // TODO add your handling code here:
         char c = evt.getKeyChar();
+        String currentText = contactNumber_txt.getText();
 
+        // Only allow digits and backspace
         if (!Character.isDigit(c) && c != '\b') {
             evt.consume();
+            return;
+        }
+
+        // Limit to exactly 11 digits
+        if (currentText.length() >= 11 && c != '\b') {
+            evt.consume();
+            return;
+        }
+
+        // Auto-add '09' prefix if field is empty and user starts with '9'
+        if (currentText.isEmpty() && c == '9') {
+            contactNumber_txt.setText("09");
+            return;
         }
     }//GEN-LAST:event_contactNumber_txtKeyTyped
 
@@ -5129,11 +5855,7 @@ private void showCard(String name) {
                 email_txt.setText(supplier_tbl.getValueAt(row, 3).toString());
                 address_txt.setText(supplier_tbl.getValueAt(row, 4).toString());
 
-                Object createdObj = supplier_tbl.getValueAt(row, 5);
-                createAt_txt3.setText(createdObj == null ? "" : createdObj.toString());
-
-                Object updatedObj = supplier_tbl.getValueAt(row, 6);
-                updatedat_txt2.setText(updatedObj == null ? "" : updatedObj.toString());
+         
 
                 oldSupplierName = supplier_tbl.getValueAt(row, 0).toString();
                 oldContactPerson = supplier_tbl.getValueAt(row, 1).toString();
@@ -5166,13 +5888,13 @@ private void showCard(String name) {
             return;
         }
 
-        if (category.equals("SELECT CATEGORY")) {
-            JOptionPane.showMessageDialog(this, "Please select a category.");
+        if (category.equals("SELECT CATEGORY") || category.equals("ALL")) {
+            JOptionPane.showMessageDialog(this, "Please select a valid category.\nAdd categories first if none are available.");
             return;
         }
 
-        if (supplier.equals("SELECT SUPPLIER")) {
-            JOptionPane.showMessageDialog(this, "Please select a supplier.");
+        if (supplier.equals("SELECT SUPPLIER") || supplier.equals("ALL")) {
+            JOptionPane.showMessageDialog(this, "Please select a valid supplier.\nAdd suppliers first if none are available.");
             return;
         }
 
@@ -5204,6 +5926,22 @@ private void showCard(String name) {
             return;
         }
 
+        if (prod.isProductNameExists(name)) {
+            JOptionPane.showMessageDialog(this, "Product name already exists.");
+            productName_txt.setBackground(new Color(255, 102, 102));
+            return;
+        }
+
+        double costPrice = Double.parseDouble(cost);
+        double sellingPrice = Double.parseDouble(selling);
+
+        if (costPrice > sellingPrice) {
+            JOptionPane.showMessageDialog(this, "Cost price cannot be higher than selling price.");
+            costPrice_txt.setBackground(new Color(255, 102, 102));
+            sellingPrice_txt.setBackground(new Color(255, 102, 102));
+            return;
+        }
+
         int confirm = JOptionPane.showConfirmDialog(
                 this,
                 "Are you sure you want to add this product?",
@@ -5217,8 +5955,8 @@ private void showCard(String name) {
                     name,
                     category,
                     supplier,
-                    Double.parseDouble(cost),
-                    Double.parseDouble(selling),
+                    costPrice,
+                    sellingPrice,
                     Integer.parseInt(stock),
                     Integer.parseInt(reorder),
                     selectedProductImagePath
@@ -5289,6 +6027,10 @@ private void showCard(String name) {
 
             productEditMode = true;
 
+            // Disable add and delete buttons when in update mode
+            addProduct_btn.setEnabled(false);
+            deleteProduct_btn.setEnabled(false);
+
             JOptionPane.showMessageDialog(this, "Edit mode enabled. You can now edit the product and click Update again to save.");
 
         } else {
@@ -5307,13 +6049,13 @@ private void showCard(String name) {
                 return;
             }
 
-            if (category.equals("SELECT CATEGORY") || category.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Please select a category.");
+            if (category.equals("SELECT CATEGORY") || category.equals("ALL") || category.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Please select a valid category.\nAdd categories first if none are available.");
                 return;
             }
 
-            if (supplier.equals("SELECT SUPPLIER") || supplier.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Please select a supplier.");
+            if (supplier.equals("SELECT SUPPLIER") || supplier.equals("ALL") || supplier.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Please select a valid supplier.\nAdd suppliers first if none are available.");
                 return;
             }
 
@@ -5517,6 +6259,9 @@ private void showCard(String name) {
                     Image_txt.setIcon(null);
                     Image_txt.setText("");
                 }
+
+                // Enable view-only mode: disable all buttons except clear, make fields read-only
+                setProductViewMode(true);
             }
         }
     }//GEN-LAST:event_product_tblMouseClicked
@@ -5524,18 +6269,65 @@ private void showCard(String name) {
     private void costPrice_txtKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_costPrice_txtKeyTyped
         // TODO add your handling code here:
         char c = evt.getKeyChar();
-        if (!Character.isDigit(c) && c != '.' && c != '\b') {
+        if (!Character.isDigit(c) && c != '.' && c != '\b' && c != '\u007F') {
             evt.consume();
         }
     }//GEN-LAST:event_costPrice_txtKeyTyped
 
+    private void costPrice_txtKeyReleased(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_costPrice_txtKeyReleased
+        // TODO add your handling code here:
+        calculateProfitMargin();
+    }//GEN-LAST:event_costPrice_txtKeyReleased
+
     private void sellingPrice_txtKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_sellingPrice_txtKeyTyped
         // TODO add your handling code here:
         char c = evt.getKeyChar();
-        if (!Character.isDigit(c) && c != '.' && c != '\b') {
+        if (!Character.isDigit(c) && c != '.' && c != '\b' && c != '\u007F') {
             evt.consume();
         }
     }//GEN-LAST:event_sellingPrice_txtKeyTyped
+
+    private void sellingPrice_txtKeyReleased(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_sellingPrice_txtKeyReleased
+        // TODO add your handling code here:
+        calculateProfitMargin();
+    }//GEN-LAST:event_sellingPrice_txtKeyReleased
+
+    private void calculateProfitMargin() {
+        String costText = costPrice_txt.getText().trim();
+        String sellingText = sellingPrice_txt.getText().trim();
+        
+        if (!costText.isEmpty() && !sellingText.isEmpty()) {
+            try {
+                double cost = Double.parseDouble(costText);
+                double selling = Double.parseDouble(sellingText);
+                
+                if (cost > 0 && selling > 0) {
+                    double margin = ((selling - cost) / selling) * 100;
+                    double profit = selling - cost;
+                    
+                    // Update a label or show tooltip with profit info
+                    costPrice_txt.setToolTipText("Cost: ₱" + String.format("%.2f", cost));
+                    sellingPrice_txt.setToolTipText("Selling: ₱" + String.format("%.2f", selling) + 
+                                                  "\nProfit: ₱" + String.format("%.2f", profit) + 
+                                                  "\nMargin: " + String.format("%.1f", margin) + "%");
+                    
+                    // Color code based on margin
+                    if (margin < 10) {
+                        sellingPrice_txt.setBackground(new Color(255, 230, 230)); // Light red for low margin
+                    } else if (margin < 20) {
+                        sellingPrice_txt.setBackground(new Color(255, 255, 230)); // Light yellow for medium margin
+                    } else {
+                        sellingPrice_txt.setBackground(new Color(230, 255, 230)); // Light green for good margin
+                    }
+                }
+            } catch (NumberFormatException e) {
+                // Invalid input, reset colors
+                sellingPrice_txt.setBackground(Color.white);
+            }
+        } else {
+            sellingPrice_txt.setBackground(Color.white);
+        }
+    }
 
     private void reorderLevel_txtKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_reorderLevel_txtKeyTyped
         // TODO add your handling code here:
@@ -5548,10 +6340,73 @@ private void showCard(String name) {
     private void stockquantity_txtKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_stockquantity_txtKeyTyped
         // TODO add your handling code here:
         char c = evt.getKeyChar();
-        if (!Character.isDigit(c) && c != '\b') {
+        if (!Character.isDigit(c) && c != '\b' && c != '\u007F') {
             evt.consume();
         }
     }//GEN-LAST:event_stockquantity_txtKeyTyped
+
+    private void stockquantity_txtKeyReleased(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_stockquantity_txtKeyReleased
+        // TODO add your handling code here:
+        checkStockLevel();
+    }//GEN-LAST:event_stockquantity_txtKeyReleased
+
+    private void checkStockLevel() {
+        String stockText = stockquantity_txt.getText().trim();
+        String reorderText = reorderLevel_txt.getText().trim();
+        
+        if (!stockText.isEmpty() && !reorderText.isEmpty()) {
+            try {
+                int stock = Integer.parseInt(stockText);
+                int reorder = Integer.parseInt(reorderText);
+                
+                if (stock <= 0) {
+                    stockquantity_txt.setBackground(new Color(255, 200, 200)); // Red for out of stock
+                    stockquantity_txt.setToolTipText("Out of Stock!");
+                } else if (stock <= reorder) {
+                    stockquantity_txt.setBackground(new Color(255, 230, 150)); // Orange for low stock
+                    stockquantity_txt.setToolTipText("Low Stock! Reorder when stock reaches " + reorder);
+                } else {
+                    stockquantity_txt.setBackground(new Color(200, 255, 200)); // Green for good stock
+                    stockquantity_txt.setToolTipText("Stock Level: " + stock + " (Reorder at: " + reorder + ")");
+                }
+            } catch (NumberFormatException e) {
+                stockquantity_txt.setBackground(Color.white);
+            }
+        } else {
+            stockquantity_txt.setBackground(Color.white);
+        }
+    }
+
+    private void productName_txtKeyReleased(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_productName_txtKeyReleased
+        // TODO add your handling code here:
+        checkProductDuplicate();
+    }//GEN-LAST:event_productName_txtKeyReleased
+
+    private void checkProductDuplicate() {
+        String name = productName_txt.getText().trim();
+        
+        if (!name.isEmpty()) {
+            try {
+                Products prod = new Products();
+                if (prod.isProductNameExists(name)) {
+                    productName_txt.setBackground(new Color(255, 200, 200));
+                    productName_txt.setToolTipText("Product name already exists!");
+                } else {
+                    productName_txt.setBackground(new Color(200, 255, 200));
+                    productName_txt.setToolTipText("Product name available");
+                }
+            } catch (Exception e) {
+                // If there's any error, reset to default state
+                productName_txt.setBackground(Color.white);
+                productName_txt.setToolTipText("Error checking product name");
+                System.err.println("Error in checkProductDuplicate: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } else {
+            productName_txt.setBackground(Color.white);
+            productName_txt.setToolTipText("");
+        }
+    }
 
     private void autoGenerateBarcode_rbtActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_autoGenerateBarcode_rbtActionPerformed
         // TODO add your handling code here:
@@ -5750,7 +6605,7 @@ private void showCard(String name) {
                 );
 
                 inv.loadStockInTable(StockIn_tbl, searchIN_txt.getText().trim(), typeIn_cmb.getSelectedItem().toString());
-                inv.loadStockMovementTable(stockMovement_tbl, "", "ALL");
+                reloadStockMovementTable();
                 refreshSelectedStockInProduct();
                 clearInventoryFields();
             }
@@ -5801,7 +6656,7 @@ private void showCard(String name) {
 
                 if (ok) {
                     inv.loadStockOutTable(StockOUT_tbl, searchOUT_txt.getText().trim());
-                    inv.loadStockMovementTable(stockMovement_tbl, "", "ALL");
+                    reloadStockMovementTable();
                     refreshSelectedStockOutProduct();
                     clearInventoryFields();
                 }
@@ -5852,10 +6707,7 @@ private void showCard(String name) {
 
     private void stockMovementSearch_txtKeyReleased(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_stockMovementSearch_txtKeyReleased
         // TODO add your handling code here:
-        InventoryMovement inv = new InventoryMovement();
-        String keyword = stockMovementSearch_txt.getText().trim();
-        String type = stockMovementType_cmb.getSelectedItem() == null ? "ALL" : stockMovementType_cmb.getSelectedItem().toString();
-        inv.loadStockMovementTable(stockMovement_tbl, keyword, type);
+        reloadStockMovementTable();
     }//GEN-LAST:event_stockMovementSearch_txtKeyReleased
 
     private void quantityIn_txtKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_quantityIn_txtKeyTyped
@@ -6030,40 +6882,11 @@ private void showCard(String name) {
     }//GEN-LAST:event_StockIn_tblMouseClicked
 
     private void searchSalesHistory_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_searchSalesHistory_btnActionPerformed
-        // TODO add your handling code here:
-        
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-
-        Date start = StartDateSalesHistory_txt.getDate();
-        Date end = endDateSalesHistory_txt.getDate();
-
-        String startDate = "";
-        String endDate = "";
-
-        if (start != null) {
-            startDate = sdf.format(start);
-        }
-
-        if (end != null) {
-            endDate = sdf.format(end);
-        }
-
-        String invoiceNo = InvoiceNoSalesHistory_txt.getText().trim();
-        String cashier = (String) cashierSalesHistory_cmb.getSelectedItem();
-        String paymentMethod = (String) paymentMethodSAlesHistory_cmb.getSelectedItem();
-
-        salesHistory.searchSalesHistory(
-                salesList_tbl,
-                startDate,
-                endDate,
-                invoiceNo,
-                cashier,
-                paymentMethod
-        );
+        salesHistoryQuickPeriod = "";
+        applySalesHistoryFilters();
     }//GEN-LAST:event_searchSalesHistory_btnActionPerformed
 
     private void clearsalesHistory_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_clearsalesHistory_btnActionPerformed
-        // TODO add your handling code here:
         StartDateSalesHistory_txt.setDate(null);
         endDateSalesHistory_txt.setDate(null);
 
@@ -6073,22 +6896,7 @@ private void showCard(String name) {
         paymentMethodSAlesHistory_cmb.setSelectedIndex(0);
 
         ((DefaultTableModel) selectedSaleItems_tbl.getModel()).setRowCount(0);
-
-        salesHistory.loadSalesHistoryTable(salesList_tbl);
-
-        SalesHistory.SalesSummary summary = salesHistory.getSalesSummary(
-                "", "", "",
-                (String) cashierSalesHistory_cmb.getSelectedItem(),
-                (String) paymentMethodSAlesHistory_cmb.getSelectedItem()
-        );
-
-        salesHistory.setSummaryLabels(
-                totalSales_lbl,
-                transactionHsitory_lbl,
-                itemSold_lbl,
-                totalDiscount_lbl,
-                summary
-        );
+        applySalesQuickPeriod("TODAY");
     }//GEN-LAST:event_clearsalesHistory_btnActionPerformed
 
     private void salesList_tblMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_salesList_tblMouseClicked
@@ -6158,6 +6966,59 @@ private void showCard(String name) {
 
     }//GEN-LAST:event_logout_btnActionPerformed
 
+    private void dashboard_tblMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_dashboard_tblMouseClicked
+        // TODO add your handling code here:
+        
+    }//GEN-LAST:event_dashboard_tblMouseClicked
+
+    private void passwordToggle_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_passwordToggle_btnActionPerformed
+        if (password_txt.getEchoChar() == '\u2022') {
+            password_txt.setEchoChar((char) 0);
+        } else {
+            password_txt.setEchoChar('\u2022');
+        }
+    }//GEN-LAST:event_passwordToggle_btnActionPerformed
+
+    private void ConfirmpasswordToggle_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_ConfirmpasswordToggle_btnActionPerformed
+        if (confirmPass_txt.getEchoChar() == '\u2022') {
+            confirmPass_txt.setEchoChar((char) 0);
+        } else {
+            confirmPass_txt.setEchoChar('\u2022');
+        }
+    }//GEN-LAST:event_ConfirmpasswordToggle_btnActionPerformed
+
+    private void products_panelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_products_panelMouseClicked
+        openDashboardModule("products", "products", "productCard");
+    }//GEN-LAST:event_products_panelMouseClicked
+
+    private void suppliers_panelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_suppliers_panelMouseClicked
+        openDashboardModule("suppliers", "suppliers", "supplierCard");
+    }//GEN-LAST:event_suppliers_panelMouseClicked
+
+    private void users_panelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_users_panelMouseClicked
+        openDashboardModule("users", "users", "userCard");
+    }//GEN-LAST:event_users_panelMouseClicked
+
+    private void lowStock_PanelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_lowStock_PanelMouseClicked
+        openInventoryStockMonitoring();
+    }//GEN-LAST:event_lowStock_PanelMouseClicked
+
+    private void totalSales_PanelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_totalSales_PanelMouseClicked
+        openDashboardModule("salesHistory", "salesHistory", "salesCard");
+    }//GEN-LAST:event_totalSales_PanelMouseClicked
+
+    private void outOfStock_PanelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_outOfStock_PanelMouseClicked
+        openInventoryStockMonitoring();
+    }//GEN-LAST:event_outOfStock_PanelMouseClicked
+
+    private void totalCategory_PanelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_totalCategory_PanelMouseClicked
+        openDashboardModule("categories", "categories", "categoryCard");
+    }//GEN-LAST:event_totalCategory_PanelMouseClicked
+
+    private void transaction_panelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_transaction_panelMouseClicked
+        openDashboardModule("salesHistory", "salesHistory", "salesCard");
+    }//GEN-LAST:event_transaction_panelMouseClicked
+
    
     public static void main(String args[]) {
         /* Set the Nimbus look and feel */
@@ -6186,6 +7047,7 @@ private void showCard(String name) {
     private javax.swing.JPanel CategoryPanelHeader;
     private javax.swing.JTable Category_tbl;
     private javax.swing.JButton ClearSupplier_btn;
+    private javax.swing.JToggleButton ConfirmpasswordToggle_btn;
     private javax.swing.JPanel DashboardPanel;
     private javax.swing.JPanel DashboardPanel1;
     private javax.swing.JPanel DashboardPanelHeader;
@@ -6263,8 +7125,6 @@ private void showCard(String name) {
     private javax.swing.JTextField contactPerson_txt;
     private javax.swing.JPanel contentPanel;
     private javax.swing.JTextField costPrice_txt;
-    private javax.swing.JTextField createAt_txt3;
-    private javax.swing.JTextField createdAt_txt;
     private javax.swing.JTextField createdAt_txt1;
     private javax.swing.JLabel currentStockOUT_lbl;
     private javax.swing.JLabel currentStock_lbl;
@@ -6283,6 +7143,7 @@ private void showCard(String name) {
     private javax.swing.JLabel fullnameofUser_lbl;
     private javax.swing.JButton generateReport_btn;
     private javax.swing.JPanel headerPanel;
+    private javax.swing.JPanel imagePanel;
     private javax.swing.JPanel inventoryPanel;
     private javax.swing.JLabel itemSold_lbl;
     private com.toedter.calendar.JDateChooser jDateChooser1;
@@ -6352,6 +7213,7 @@ private void showCard(String name) {
     private javax.swing.JLabel jLabel155;
     private javax.swing.JLabel jLabel156;
     private javax.swing.JLabel jLabel157;
+    private javax.swing.JLabel jLabel158;
     private javax.swing.JLabel jLabel16;
     private javax.swing.JLabel jLabel17;
     private javax.swing.JLabel jLabel18;
@@ -6373,7 +7235,6 @@ private void showCard(String name) {
     private javax.swing.JLabel jLabel32;
     private javax.swing.JLabel jLabel33;
     private javax.swing.JLabel jLabel34;
-    private javax.swing.JLabel jLabel35;
     private javax.swing.JLabel jLabel36;
     private javax.swing.JLabel jLabel37;
     private javax.swing.JLabel jLabel38;
@@ -6394,7 +7255,6 @@ private void showCard(String name) {
     private javax.swing.JLabel jLabel51;
     private javax.swing.JLabel jLabel52;
     private javax.swing.JLabel jLabel53;
-    private javax.swing.JLabel jLabel54;
     private javax.swing.JLabel jLabel55;
     private javax.swing.JLabel jLabel56;
     private javax.swing.JLabel jLabel57;
@@ -6402,8 +7262,6 @@ private void showCard(String name) {
     private javax.swing.JLabel jLabel59;
     private javax.swing.JLabel jLabel6;
     private javax.swing.JLabel jLabel60;
-    private javax.swing.JLabel jLabel61;
-    private javax.swing.JLabel jLabel62;
     private javax.swing.JLabel jLabel63;
     private javax.swing.JLabel jLabel64;
     private javax.swing.JLabel jLabel65;
@@ -6455,7 +7313,6 @@ private void showCard(String name) {
     private javax.swing.JPanel jPanel17;
     private javax.swing.JPanel jPanel18;
     private javax.swing.JPanel jPanel19;
-    private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel20;
     private javax.swing.JPanel jPanel21;
     private javax.swing.JPanel jPanel22;
@@ -6466,7 +7323,6 @@ private void showCard(String name) {
     private javax.swing.JPanel jPanel27;
     private javax.swing.JPanel jPanel28;
     private javax.swing.JPanel jPanel29;
-    private javax.swing.JPanel jPanel3;
     private javax.swing.JPanel jPanel30;
     private javax.swing.JPanel jPanel31;
     private javax.swing.JPanel jPanel32;
@@ -6477,7 +7333,6 @@ private void showCard(String name) {
     private javax.swing.JPanel jPanel37;
     private javax.swing.JPanel jPanel38;
     private javax.swing.JPanel jPanel39;
-    private javax.swing.JPanel jPanel4;
     private javax.swing.JPanel jPanel40;
     private javax.swing.JPanel jPanel41;
     private javax.swing.JPanel jPanel42;
@@ -6488,22 +7343,17 @@ private void showCard(String name) {
     private javax.swing.JPanel jPanel47;
     private javax.swing.JPanel jPanel48;
     private javax.swing.JPanel jPanel49;
-    private javax.swing.JPanel jPanel5;
     private javax.swing.JPanel jPanel50;
     private javax.swing.JPanel jPanel51;
     private javax.swing.JPanel jPanel52;
-    private javax.swing.JPanel jPanel53;
     private javax.swing.JPanel jPanel54;
     private javax.swing.JPanel jPanel55;
     private javax.swing.JPanel jPanel56;
     private javax.swing.JPanel jPanel57;
     private javax.swing.JPanel jPanel58;
     private javax.swing.JPanel jPanel59;
-    private javax.swing.JPanel jPanel6;
     private javax.swing.JPanel jPanel60;
-    private javax.swing.JPanel jPanel7;
     private javax.swing.JPanel jPanel8;
-    private javax.swing.JPanel jPanel9;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JScrollPane jScrollPane10;
     private javax.swing.JScrollPane jScrollPane11;
@@ -6523,10 +7373,13 @@ private void showCard(String name) {
     private javax.swing.JPanel jtablePanel;
     private javax.swing.JTextField lastname_txt;
     private javax.swing.JButton logout_btn;
+    private javax.swing.JPanel lowStock_Panel;
     private javax.swing.JLabel lowstockDashboad_lbl;
     private javax.swing.JTextField middlename_txt;
     private javax.swing.JLabel onlineOffline_lbl;
+    private javax.swing.JPanel outOfStock_Panel;
     private javax.swing.JLabel outOfStockdashboard_lbl;
+    private javax.swing.JToggleButton passwordToggle_btn;
     private javax.swing.JPasswordField password_txt;
     private javax.swing.JComboBox<String> paymentMethodSAlesHistory_cmb;
     private javax.swing.JPanel paymentPanel;
@@ -6537,6 +7390,7 @@ private void showCard(String name) {
     private javax.swing.JComboBox<String> productStockIN_cmb;
     private javax.swing.JTable product_tbl;
     private javax.swing.JPanel productsPanel;
+    private javax.swing.JPanel products_panel;
     private javax.swing.JTextField quantityIn_txt;
     private javax.swing.JTextField quantityOUT_txt;
     private javax.swing.JComboBox<String> reason_cmb;
@@ -6575,6 +7429,7 @@ private void showCard(String name) {
     private javax.swing.JButton stockmovement_btn;
     private javax.swing.JButton stockout_btn;
     private javax.swing.JTextField stockquantity_txt;
+    private javax.swing.JComboBox<String> stocksType_cmb;
     private javax.swing.JTextField supplierIN_btn;
     private javax.swing.JLabel supplierMovement_lbl;
     private javax.swing.JTextField supplierName_txt;
@@ -6584,26 +7439,29 @@ private void showCard(String name) {
     private javax.swing.JTextField supplierSearch_txt;
     private javax.swing.JComboBox<String> supplier_cmb;
     private javax.swing.JTable supplier_tbl;
+    private javax.swing.JPanel suppliers_panel;
+    private javax.swing.JPanel totalCategory_Panel;
     private javax.swing.JLabel totalCategory_lbl;
     private javax.swing.JLabel totalDiscount_lbl;
     private javax.swing.JLabel totalProduct_lbl;
     private javax.swing.JLabel totalSalesDashboard;
+    private javax.swing.JPanel totalSales_Panel;
     private javax.swing.JLabel totalSales_lbl;
     private javax.swing.JLabel totalSupplier_lbl;
     private javax.swing.JLabel totalTransaction_lbl;
     private javax.swing.JLabel totalUser_lbl;
     private javax.swing.JLabel transactionHsitory_lbl;
+    private javax.swing.JPanel transaction_panel;
     private javax.swing.JComboBox<String> typeIn_cmb;
     private javax.swing.JButton updateCategory_btn;
     private javax.swing.JButton updateProduct_btn;
     private javax.swing.JButton update_btn;
-    private javax.swing.JTextField updatedat_txt;
     private javax.swing.JTextField updatedat_txt1;
-    private javax.swing.JTextField updatedat_txt2;
     private javax.swing.JTextField userID_txt;
     private javax.swing.JLabel userNameWelcome_lbl;
     private javax.swing.JPanel userPanel;
     private javax.swing.JTable user_tbl;
     private javax.swing.JTextField username_txt;
+    private javax.swing.JPanel users_panel;
     // End of variables declaration//GEN-END:variables
 }

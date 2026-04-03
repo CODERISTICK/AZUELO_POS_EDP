@@ -5,6 +5,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
 import java.util.Vector;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
@@ -53,39 +54,107 @@ public class SalesHistory {
     }
 
     public void loadSalesHistoryTable(JTable salesListTable) {
-        DefaultTableModel model = (DefaultTableModel) salesListTable.getModel();
-        model.setRowCount(0);
+        loadSalesHistoryTableModern(salesListTable, "", "", "", "ALL CASHIERS", "ALL METHODS");
+    }
 
-        String sql =
-            "SELECT s.sale_id, s.invoice_number, s.sale_date, " +
-            "CONCAT(u.first_name, ' ', u.last_name) AS cashier, " +
-            "s.subtotal_amount, s.vat_amount, s.discount_amount, " +
-            "s.total_amount, s.payment_method, s.change_amount " +
-            "FROM sales s " +
-            "JOIN users u ON s.user_id = u.user_id " +
-            "ORDER BY s.sale_date DESC";
+    public void loadSalesHistoryTableModern(
+            JTable salesListTable,
+            String startDate,
+            String endDate,
+            String invoiceNo,
+            String cashierComboValue,
+            String paymentMethodComboValue
+    ) {
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[]{"Sale ID", "Date", "Receipt No.", "Customer", "Total Amount", "Payment Method", "Cashier"},
+                0
+        ) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+
+        StringBuilder sql = new StringBuilder(
+                "SELECT s.sale_id, s.sale_date, s.invoice_number, "
+                + "s.total_amount, s.payment_method, "
+                + "CONCAT(u.first_name, ' ', u.last_name) AS cashier "
+                + "FROM sales s "
+                + "JOIN users u ON s.user_id = u.user_id "
+                + "WHERE 1=1 "
+        );
+
+        if (startDate != null && !startDate.trim().isEmpty()) {
+            sql.append(" AND DATE(s.sale_date) >= ? ");
+        }
+        if (endDate != null && !endDate.trim().isEmpty()) {
+            sql.append(" AND DATE(s.sale_date) <= ? ");
+        }
+        if (invoiceNo != null && !invoiceNo.trim().isEmpty()) {
+            sql.append(" AND s.invoice_number LIKE ? ");
+        }
+        if (paymentMethodComboValue != null && !paymentMethodComboValue.equals("ALL METHODS")) {
+            sql.append(" AND s.payment_method = ? ");
+        }
+        if (cashierComboValue != null && !cashierComboValue.equals("ALL CASHIERS")) {
+            sql.append(" AND s.user_id = ? ");
+        }
+
+        sql.append(" ORDER BY s.sale_date DESC ");
 
         try (Connection con = DBConnection.getConnection();
-             PreparedStatement pst = con.prepareStatement(sql);
-             ResultSet rs = pst.executeQuery()) {
+             PreparedStatement pst = con.prepareStatement(sql.toString())) {
 
-            while (rs.next()) {
-                Vector<Object> row = new Vector<>();
-                row.add(rs.getInt("sale_id")); // hidden/internal if you want
-                row.add(rs.getString("invoice_number"));
-                row.add(rs.getString("sale_date"));
-                row.add(rs.getString("cashier"));
-                row.add(df.format(rs.getDouble("subtotal_amount")));
-                row.add(df.format(rs.getDouble("vat_amount")));
-                row.add(df.format(rs.getDouble("discount_amount")));
-                row.add(df.format(rs.getDouble("total_amount")));
-                row.add(rs.getString("payment_method"));
-                row.add(df.format(rs.getDouble("change_amount")));
-                model.addRow(row);
+            int paramIndex = 1;
+
+            if (startDate != null && !startDate.trim().isEmpty()) {
+                pst.setString(paramIndex++, startDate);
             }
+            if (endDate != null && !endDate.trim().isEmpty()) {
+                pst.setString(paramIndex++, endDate);
+            }
+            if (invoiceNo != null && !invoiceNo.trim().isEmpty()) {
+                pst.setString(paramIndex++, "%" + invoiceNo + "%");
+            }
+            if (paymentMethodComboValue != null && !paymentMethodComboValue.equals("ALL METHODS")) {
+                pst.setString(paramIndex++, paymentMethodComboValue);
+            }
+            if (cashierComboValue != null && !cashierComboValue.equals("ALL CASHIERS")) {
+                int userId = Integer.parseInt(cashierComboValue.split(" - ")[0]);
+                pst.setInt(paramIndex++, userId);
+            }
+
+            try (ResultSet rs = pst.executeQuery()) {
+                while (rs.next()) {
+                    Vector<Object> row = new Vector<>();
+                    row.add(rs.getInt("sale_id"));
+                    row.add(formatDateTime(rs.getString("sale_date")));
+                    row.add(rs.getString("invoice_number"));
+                    row.add("Walk-in");
+                    row.add("₱" + df.format(rs.getDouble("total_amount")));
+                    row.add(rs.getString("payment_method"));
+                    row.add(rs.getString("cashier"));
+                    model.addRow(row);
+                }
+            }
+
+            salesListTable.setModel(model);
 
         } catch (SQLException e) {
             e.printStackTrace();
+        }
+    }
+
+    private String formatDateTime(String rawDateTime) {
+        if (rawDateTime == null || rawDateTime.trim().isEmpty()) {
+            return "";
+        }
+
+        try {
+            java.util.Date parsed = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(rawDateTime);
+            return new SimpleDateFormat("yyyy-MM-dd hh:mm a").format(parsed);
+        } catch (Exception ex) {
+            return rawDateTime;
         }
     }
 

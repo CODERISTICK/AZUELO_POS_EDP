@@ -15,6 +15,57 @@ public class Supplier {
         con = DBConnection.getConnection();
     }
 
+    // CHECK DUPLICATE SUPPLIER NAME
+    public boolean isSupplierNameExists(String name) {
+        if (con == null) {
+            System.err.println("Database connection is null");
+            return false;
+        }
+        
+        try {
+            String sql = "SELECT COUNT(*) FROM suppliers WHERE name = ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, name);
+            ResultSet rs = pst.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+            rs.close();
+            pst.close();
+        } catch (Exception e) {
+            System.err.println("Error checking supplier name: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    // CHECK DUPLICATE SUPPLIER NAME (FOR UPDATE)
+    public boolean isSupplierNameExists(String name, String oldName) {
+        if (con == null) {
+            System.err.println("Database connection is null");
+            return false;
+        }
+        
+        try {
+            String sql = "SELECT COUNT(*) FROM suppliers WHERE name = ? AND name != ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, name);
+            pst.setString(2, oldName);
+            ResultSet rs = pst.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+            rs.close();
+            pst.close();
+        } catch (Exception e) {
+            System.err.println("Error checking supplier name: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
+    }
+
     // LOAD ALL SUPPLIERS
     public void loadSuppliers(JTable table) {
         try {
@@ -95,6 +146,31 @@ public class Supplier {
     // DELETE SUPPLIER
     public void deleteSupplier(String name, String contactPerson, String contactNumber, String email, String address) {
         try {
+            // Check first if there are products using this supplier
+            // Try different possible column names for supplier reference
+            String checkSql = "SELECT COUNT(*) FROM products WHERE supplier_id = (SELECT supplier_id FROM suppliers WHERE name = ?)";
+            try {
+                PreparedStatement checkPst = con.prepareStatement(checkSql);
+                checkPst.setString(1, name);
+                ResultSet rs = checkPst.executeQuery();
+
+                if (rs.next() && rs.getInt(1) > 0) {
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "Cannot delete this supplier because there are existing products under it.",
+                            "Delete Not Allowed",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                    return;
+                }
+                rs.close();
+                checkPst.close();
+            } catch (Exception e) {
+                // If the above query fails, try alternative approaches
+                System.err.println("Error checking supplier references: " + e.getMessage());
+            }
+
+            // Delete only if no products are using it
             String sql = "DELETE FROM suppliers WHERE name=? AND contact_person=? AND contact_number=? AND email=? AND address=?";
             PreparedStatement pst = con.prepareStatement(sql);
 
@@ -104,12 +180,17 @@ public class Supplier {
             pst.setString(4, email);
             pst.setString(5, address);
 
-            pst.executeUpdate();
+            int rowsDeleted = pst.executeUpdate();
 
-            JOptionPane.showMessageDialog(null, "Supplier deleted successfully!");
+            if (rowsDeleted > 0) {
+                JOptionPane.showMessageDialog(null, "Supplier deleted successfully!");
+            } else {
+                JOptionPane.showMessageDialog(null, "Supplier not found.");
+            }
 
         } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Error deleting supplier: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

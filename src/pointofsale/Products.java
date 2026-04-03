@@ -14,6 +14,36 @@ public class Products {
 
     public Products() {
         con = DBConnection.getConnection();
+        if (con == null) {
+            System.err.println("Failed to connect to database in Products constructor");
+        }
+    }
+
+    // TEST DATABASE CONNECTION
+    public boolean testConnection() {
+        try {
+            if (con == null) {
+                System.err.println("Connection is null");
+                return false;
+            }
+            if (con.isClosed()) {
+                System.err.println("Connection is closed");
+                return false;
+            }
+            // Test a simple query
+            String sql = "SELECT 1";
+            PreparedStatement pst = con.prepareStatement(sql);
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                rs.close();
+                pst.close();
+                return true;
+            }
+        } catch (Exception e) {
+            System.err.println("Database test failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
     }
 
     // LOAD CATEGORY TO COMBOBOX
@@ -106,6 +136,84 @@ public class Products {
 
         } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Error checking barcode: " + e.getMessage());
+        }
+        return false;
+    }
+
+    // CHECK DUPLICATE PRODUCT NAME
+    public boolean isProductNameExists(String productName) {
+        if (con == null) {
+            System.err.println("Database connection is null");
+            return false;
+        }
+        
+        try {
+            // Try with 'name' column first (most likely)
+            String sql = "SELECT COUNT(*) FROM products WHERE name = ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, productName);
+            ResultSet rs = pst.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+
+        } catch (Exception e) {
+            // If 'name' column doesn't exist, try 'product_name'
+            try {
+                String sql = "SELECT COUNT(*) FROM products WHERE product_name = ?";
+                PreparedStatement pst = con.prepareStatement(sql);
+                pst.setString(1, productName);
+                ResultSet rs = pst.executeQuery();
+
+                if (rs.next()) {
+                    return rs.getInt(1) > 0;
+                }
+            } catch (Exception e2) {
+                System.err.println("Error checking product name with both column names: " + e2.getMessage());
+                e2.printStackTrace();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // CHECK DUPLICATE PRODUCT NAME (FOR UPDATE)
+    public boolean isProductNameExists(String productName, int excludeProductId) {
+        if (con == null) {
+            System.err.println("Database connection is null");
+            return false;
+        }
+        
+        try {
+            // Try with 'name' column first (most likely)
+            String sql = "SELECT COUNT(*) FROM products WHERE name = ? AND product_id != ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, productName);
+            pst.setInt(2, excludeProductId);
+            ResultSet rs = pst.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+
+        } catch (Exception e) {
+            // If 'name' column doesn't exist, try 'product_name'
+            try {
+                String sql = "SELECT COUNT(*) FROM products WHERE product_name = ? AND product_id != ?";
+                PreparedStatement pst = con.prepareStatement(sql);
+                pst.setString(1, productName);
+                pst.setInt(2, excludeProductId);
+                ResultSet rs = pst.executeQuery();
+
+                if (rs.next()) {
+                    return rs.getInt(1) > 0;
+                }
+            } catch (Exception e2) {
+                System.err.println("Error checking product name with both column names: " + e2.getMessage());
+                e2.printStackTrace();
+                return false;
+            }
         }
         return false;
     }

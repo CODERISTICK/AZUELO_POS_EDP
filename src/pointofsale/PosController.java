@@ -29,7 +29,71 @@ import com.itextpdf.text.Paragraph;
 import com.itextpdf.text.FontFactory;
 import com.itextpdf.text.pdf.PdfWriter;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+
+import java.util.Base64;
+import javax.imageio.ImageIO;
+
 public class PosController {
+    // --- Totals Calculation Logic ---
+    private void calculateTotals() {
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal discount = BigDecimal.ZERO;
+        BigDecimal vat = BigDecimal.ZERO;
+        BigDecimal total = BigDecimal.ZERO;
+
+        // Sum all item subtotals and discounts
+        for (int i = 0; i < cartModel.getRowCount(); i++) {
+            Object subObj = cartModel.getValueAt(i, 6); // Subtotal column
+            Object discObj = cartModel.getValueAt(i, 5); // Discount column
+            try {
+                String subStr = subObj != null ? subObj.toString().replace("₱", "").replace(",", "").trim() : "0";
+                String discStr = discObj != null ? discObj.toString().replace("₱", "").replace(",", "").trim() : "0";
+                subtotal = subtotal.add(new BigDecimal(subStr));
+                discount = discount.add(new BigDecimal(discStr));
+            } catch (Exception e) {
+                // ignore parse errors
+            }
+        }
+
+        // VAT is fixed or can be a percentage, here using DEFAULT_VAT as fixed
+        vat = cartModel.getRowCount() > 0 ? DEFAULT_VAT : BigDecimal.ZERO;
+        // If you want VAT as a percentage, use: vat = subtotal.multiply(new BigDecimal("0.12"));
+
+        // Total = subtotal + VAT - discount
+        total = subtotal.add(vat).subtract(discount);
+        if (total.compareTo(BigDecimal.ZERO) < 0) total = BigDecimal.ZERO;
+
+        // Update fields (always update all payment fields regardless of tab)
+        subtotalTxt.setText(formatPeso(subtotal));
+        vatTxt.setText(formatPeso(vat));
+        discountTxt.setText(formatPeso(discount));
+        totalTxt.setText(formatPeso(total));
+        totalTxt.setForeground(SUCCESS);
+        totalTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
+
+        // Always update GCash and Card amount fields if present
+        if (gcashAmountTxt != null) gcashAmountTxt.setText(formatPeso(total));
+        if (cardAmountTxt != null) cardAmountTxt.setText(formatPeso(total));
+
+        // Always update change for Cash tab
+        updateChangeAmount(total);
+    }
+
+    private void updateChangeAmount(BigDecimal total) {
+        try {
+            String cashStr = cashTenderedTxt.getText().replace("₱", "").replace(",", "").trim();
+            if (cashStr.isEmpty()) cashStr = "0";
+            BigDecimal cash = new BigDecimal(cashStr);
+            BigDecimal change = cash.subtract(total);
+            if (change.compareTo(BigDecimal.ZERO) < 0) change = BigDecimal.ZERO;
+            changeTxt.setText(formatPeso(change));
+        } catch (Exception e) {
+            changeTxt.setText("₱0.00");
+        }
+    }
 
     private final JPanel posPanel;
     private final JPanel headerPanel;
@@ -38,6 +102,7 @@ public class PosController {
     private final JPanel paymentPanel;
     private final JPanel buttonPanel;
     private final String loggedInUsername;
+    private final String loggedInFullName;
     private final Runnable afterCheckoutRefresh;
 
     // Header
@@ -53,7 +118,6 @@ public class PosController {
     private JTextField itemDiscountTxt;
     private JButton searchProductBtn;
     private JButton addItemBtn;
-    private JButton minusQtyBtn;
     private JButton removeItemBtn;
 
     // Cart
@@ -61,14 +125,34 @@ public class PosController {
     private DefaultTableModel cartModel;
     private JScrollPane cartScroll;
 
-    // Payment
+    // Payment summary
     private JTextField subtotalTxt;
     private JTextField vatTxt;
     private JTextField discountTxt;
     private JTextField totalTxt;
+
+    // Cash
     private JTextField cashTenderedTxt;
     private JTextField changeTxt;
-    private JComboBox<String> paymentMethodCmb;
+
+    // GCash
+    private JTextField gcashNumberTxt;
+    private JTextField gcashReferenceTxt;
+    private JTextField gcashAmountTxt;
+
+    // Card
+    private JTextField cardNumberTxt;
+    private JTextField cardHolderTxt;
+    private JTextField cardExpiryTxt;
+    private JTextField cardCvvTxt;
+    private JTextField cardAmountTxt;
+
+    // Payment tabs
+    private JPanel paymentContentPanel;
+    private JButton cashTabBtn;
+    private JButton gcashTabBtn;
+    private JButton cardTabBtn;
+    private String currentPaymentMethod = "Cash";
 
     // Buttons
     private JButton checkoutBtn;
@@ -107,6 +191,10 @@ public class PosController {
     private final Color TEXT_DARK = new Color(15, 23, 42);
     private final Color TEXT_MUTED = new Color(100, 116, 139);
     private final Color FIELD_BG = new Color(248, 250, 252);
+    
+    private JLabel productImageLbl;
+    private byte[] selectedProductImageBytes;
+    private final JPanel imagePanel;
 
     public PosController(
             JPanel posPanel,
@@ -115,7 +203,9 @@ public class PosController {
             JPanel cartPanel,
             JPanel paymentPanel,
             JPanel buttonPanel,
+            JPanel imagePanel,
             String loggedInUsername,
+                String loggedInFullName,
             Runnable afterCheckoutRefresh
     ) {
         this.posPanel = posPanel;
@@ -124,7 +214,9 @@ public class PosController {
         this.cartPanel = cartPanel;
         this.paymentPanel = paymentPanel;
         this.buttonPanel = buttonPanel;
+        this.imagePanel = imagePanel;
         this.loggedInUsername = loggedInUsername;
+        this.loggedInFullName = loggedInFullName;
         this.afterCheckoutRefresh = afterCheckoutRefresh;
 
         initialize();
@@ -137,6 +229,7 @@ public class PosController {
         buildCartPanel();
         buildPaymentPanel();
         buildButtonPanel();
+        buildImagePanel();
         wireEvents();
         installKeyboardShortcuts();
         startDateTimeTimer();
@@ -155,13 +248,16 @@ public class PosController {
     }
 
     private void styleSectionPanel(JPanel panel) {
-        panel.setBackground(BG_CARD);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                new LineBorder(BORDER, 1, true),
-                new EmptyBorder(10, 10, 10, 10)
-        ));
+    panel.setBackground(BG_CARD);
+    panel.setBorder(BorderFactory.createCompoundBorder(
+            new LineBorder(BORDER, 1, true),
+            new EmptyBorder(10, 10, 10, 10)
+    ));
+
+    if (panel != paymentPanel) {
         panel.setLayout(null);
     }
+}
 
     private void buildHeaderPanel() {
         headerPanel.removeAll();
@@ -184,7 +280,7 @@ public class PosController {
         dateTimeLbl.setBounds(430, 10, 240, 24);
         headerPanel.add(dateTimeLbl);
 
-        cashierLbl = new JLabel("Cashier: " + loggedInUsername);
+        cashierLbl = new JLabel("Cashier: " + getCashierDisplayName());
         cashierLbl.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         cashierLbl.setForeground(TEXT_DARK);
         cashierLbl.setBounds(690, 10, 170, 24);
@@ -236,12 +332,8 @@ public class PosController {
         addItemBtn.setBounds(770, y, 110, 32);
         barcodePanel.add(addItemBtn);
 
-        minusQtyBtn = createButton("MINUS QTY", WARNING, Color.WHITE);
-        minusQtyBtn.setBounds(895, y, 115, 32);
-        barcodePanel.add(minusQtyBtn);
-
         removeItemBtn = createButton("REMOVE", DANGER, Color.WHITE);
-        removeItemBtn.setBounds(1025, y, 100, 32);
+        removeItemBtn.setBounds(890, y, 100, 32);
         barcodePanel.add(removeItemBtn);
 
         JLabel hintLbl = new JLabel("Scan barcode or search product, set qty/discount, then click Add Item.");
@@ -258,6 +350,7 @@ public class PosController {
 
     private void buildCartPanel() {
         cartPanel.removeAll();
+        cartPanel.setLayout(null);
 
         JLabel cartTitle = new JLabel("CART ITEMS");
         cartTitle.setFont(new Font("Segoe UI", Font.BOLD, 18));
@@ -266,13 +359,13 @@ public class PosController {
         cartPanel.add(cartTitle);
 
         String[] columns = {
-                "Product ID",
-                "Barcode",
-                "Product Name",
-                "Qty",
-                "Unit Price",
-                "Discount",
-                "Subtotal"
+            "Product ID",
+            "Barcode",
+            "Product Name",
+            "Qty",
+            "Unit Price",
+            "Discount",
+            "Subtotal"
         };
 
         cartModel = new DefaultTableModel(columns, 0) {
@@ -290,6 +383,7 @@ public class PosController {
         cartTable.setGridColor(new Color(235, 235, 235));
         cartTable.setShowVerticalLines(false);
         cartTable.setShowHorizontalLines(true);
+        cartTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
 
         JTableHeader header = cartTable.getTableHeader();
         header.setFont(new Font("Segoe UI", Font.BOLD, 13));
@@ -297,13 +391,12 @@ public class PosController {
         header.setForeground(Color.WHITE);
         header.setPreferredSize(new Dimension(0, 32));
 
-        // Hide Product ID
         cartTable.getColumnModel().getColumn(0).setMinWidth(0);
         cartTable.getColumnModel().getColumn(0).setMaxWidth(0);
         cartTable.getColumnModel().getColumn(0).setWidth(0);
 
-        cartTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-        cartTable.getColumnModel().getColumn(2).setPreferredWidth(230);
+        cartTable.getColumnModel().getColumn(1).setPreferredWidth(120);
+        cartTable.getColumnModel().getColumn(2).setPreferredWidth(220);
         cartTable.getColumnModel().getColumn(3).setPreferredWidth(55);
         cartTable.getColumnModel().getColumn(4).setPreferredWidth(95);
         cartTable.getColumnModel().getColumn(5).setPreferredWidth(85);
@@ -313,81 +406,684 @@ public class PosController {
         cartTable.getColumnModel().getColumn(5).setCellRenderer(new MoneyRenderer());
         cartTable.getColumnModel().getColumn(6).setCellRenderer(new MoneyRenderer());
 
+        cartTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadSelectedCartProductImage();
+            }
+        });
+
         cartScroll = new JScrollPane(cartTable);
-        cartScroll.setBounds(10, 45, cartPanel.getWidth() - 20, cartPanel.getHeight() - 55);
         cartScroll.setBorder(new LineBorder(BORDER, 1, true));
+        cartScroll.setBounds(10, 45, cartPanel.getWidth() - 20, cartPanel.getHeight() - 55);
         cartPanel.add(cartScroll);
 
         cartPanel.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
-                cartScroll.setBounds(10, 45, cartPanel.getWidth() - 20, cartPanel.getHeight() - 55);
+                if (cartScroll != null) {
+                    cartScroll.setBounds(10, 45, cartPanel.getWidth() - 20, cartPanel.getHeight() - 55);
+                }
             }
         });
 
-        cartPanel.repaint();
         cartPanel.revalidate();
+        cartPanel.repaint();
     }
-
+    
+    
     private void buildPaymentPanel() {
         paymentPanel.removeAll();
+        paymentPanel.setLayout(new BorderLayout());
+
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setOpaque(false);
+        wrapper.setBorder(new EmptyBorder(8, 8, 8, 8));
+
+        JPanel detailsPanel = new JPanel(new GridBagLayout());
+        detailsPanel.setBackground(Color.WHITE);
+        detailsPanel.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(BORDER, 1, true),
+                new EmptyBorder(12, 12, 12, 12)
+        ));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
 
         JLabel paymentTitle = new JLabel("PAYMENT DETAILS");
-        paymentTitle.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        paymentTitle.setFont(new Font("Segoe UI", Font.BOLD, 14));
         paymentTitle.setForeground(PRIMARY);
-        paymentTitle.setBounds(15, 10, 230, 25);
-        paymentPanel.add(paymentTitle);
+        detailsPanel.add(paymentTitle, gbc);
 
-        int labelX = 20;
-        int fieldX = 165;
-        int y = 50;
-        int gap = 38;
+        gbc.gridy++;
+        gbc.insets = new Insets(6, 0, 10, 0);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        JPanel tabPanel = createPaymentTabsPanel(true);
+        tabPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        tabPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, tabPanel.getPreferredSize().height));
+        detailsPanel.add(tabPanel, gbc);
 
-        paymentPanel.add(createFieldLabel("Subtotal Amount", labelX, y));
-        subtotalTxt = createReadOnlyField(fieldX, y, 170, 30);
-        paymentPanel.add(subtotalTxt);
 
-        y += gap;
-        paymentPanel.add(createFieldLabel("VAT Amount", labelX, y));
-        vatTxt = createReadOnlyField(fieldX, y, 170, 30);
-        paymentPanel.add(vatTxt);
+        // Add summary panel before payment content
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 6, 0);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        JPanel summaryPanel = createSummaryPanel();
+        detailsPanel.add(summaryPanel, gbc);
 
-        y += gap;
-        paymentPanel.add(createFieldLabel("Discount Amount", labelX, y));
-        discountTxt = createReadOnlyField(fieldX, y, 170, 30);
-        paymentPanel.add(discountTxt);
+        // Now add payment content
+        gbc.gridy++;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        gbc.fill = GridBagConstraints.BOTH;
+        gbc.weightx = 1.0;
+        gbc.weighty = 1.0;
+        paymentContentPanel.setMinimumSize(new Dimension(220, 180));
+        paymentContentPanel.setPreferredSize(new Dimension(220, 200));
 
-        y += gap;
-        paymentPanel.add(createFieldLabel("Total Amount", labelX, y));
-        totalTxt = createReadOnlyField(fieldX, y, 170, 30);
-        totalTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
-        totalTxt.setForeground(SUCCESS);
-        paymentPanel.add(totalTxt);
+        JScrollPane paymentFormScroll = new JScrollPane(paymentContentPanel);
+        paymentFormScroll.setBorder(BorderFactory.createEmptyBorder());
+        paymentFormScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        paymentFormScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+        paymentFormScroll.getViewport().setBackground(Color.WHITE);
+        detailsPanel.add(paymentFormScroll, gbc);
 
-        y += gap;
-        paymentPanel.add(createFieldLabel("Payment Method", labelX, y));
-        paymentMethodCmb = new JComboBox<>(new String[]{"Cash", "GCash", "Card"});
-        paymentMethodCmb.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        paymentMethodCmb.setBounds(fieldX, y, 170, 30);
-        paymentPanel.add(paymentMethodCmb);
+        wrapper.add(detailsPanel, BorderLayout.CENTER);
+        paymentPanel.add(wrapper, BorderLayout.CENTER);
 
-        y += gap;
-        paymentPanel.add(createFieldLabel("Cash Tendered", labelX, y));
-        cashTenderedTxt = createInputField(fieldX, y, 170, 30);
-        cashTenderedTxt.setHorizontalAlignment(SwingConstants.RIGHT);
-        paymentPanel.add(cashTenderedTxt);
-
-        y += gap;
-        paymentPanel.add(createFieldLabel("Change Amount", labelX, y));
-        changeTxt = createReadOnlyField(fieldX, y, 170, 30);
-        changeTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
-        changeTxt.setForeground(ACCENT);
-        paymentPanel.add(changeTxt);
-
-        installEditableMoneyField(cashTenderedTxt, true);
-
-        paymentPanel.repaint();
         paymentPanel.revalidate();
+        paymentPanel.repaint();
+    }
+    
+    
+    private void buildImagePanel() {
+        if (imagePanel == null) {
+            return;
+        }
+
+        imagePanel.removeAll();
+        imagePanel.setLayout(null);
+        imagePanel.setBackground(Color.WHITE);
+        imagePanel.setBorder(BorderFactory.createLineBorder(new Color(220, 220, 220)));
+
+        productImageLbl = new JLabel("No Image", SwingConstants.CENTER);
+        productImageLbl.setOpaque(true);
+        productImageLbl.setBackground(Color.WHITE);
+        productImageLbl.setBorder(BorderFactory.createLineBorder(new Color(200, 200, 200)));
+        productImageLbl.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        productImageLbl.setForeground(Color.GRAY);
+
+        imagePanel.add(productImageLbl);
+
+        resizeImageLabel();
+
+        imagePanel.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                resizeImageLabel();
+
+                if (selectedProductImageBytes != null && selectedProductImageBytes.length > 0) {
+                    showProductImage(selectedProductImageBytes);
+                }
+            }
+        });
+
+        imagePanel.revalidate();
+        imagePanel.repaint();
+    }
+
+    private void resizeImageLabel() {
+        if (imagePanel == null || productImageLbl == null) {
+            return;
+        }
+
+        int panelWidth = imagePanel.getWidth();
+        int panelHeight = imagePanel.getHeight();
+
+        if (panelWidth <= 20) {
+            panelWidth = 160;
+        }
+        if (panelHeight <= 20) {
+            panelHeight = 220;
+        }
+
+        int lblWidth = panelWidth - 20;
+        int lblHeight = panelHeight - 20;
+
+        productImageLbl.setBounds(10, 10, lblWidth, lblHeight);
+    }
+
+    private void showProductImage(byte[] imageBytes) {
+        if (productImageLbl == null) {
+            return;
+        }
+
+        productImageLbl.setIcon(null);
+
+        if (imageBytes == null || imageBytes.length == 0) {
+            productImageLbl.setText("No Image");
+            return;
+        }
+
+        try {
+            BufferedImage buffered = ImageIO.read(new ByteArrayInputStream(imageBytes));
+
+            if (buffered == null) {
+                productImageLbl.setText("Invalid Image");
+                return;
+            }
+
+            int w = productImageLbl.getWidth();
+            int h = productImageLbl.getHeight();
+
+            if (w <= 0) {
+                w = 150;
+            }
+            if (h <= 0) {
+                h = 180;
+            }
+
+            Image scaled = buffered.getScaledInstance(w, h, Image.SCALE_SMOOTH);
+            productImageLbl.setIcon(new ImageIcon(scaled));
+            productImageLbl.setText("");
+        } catch (Exception e) {
+            e.printStackTrace();
+            productImageLbl.setText("Invalid Image");
+        }
+    }
+
+    private void loadProductImageByBarcode(String barcode) {
+        if (barcode == null || barcode.trim().isEmpty()) {
+            selectedProductImageBytes = null;
+            showProductImage(null);
+            return;
+        }
+
+        String sql = "SELECT product_image FROM products WHERE barcode = ?";
+
+        try (Connection con = DBConnection.getConnection(); PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setString(1, barcode.trim());
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String imageText = rs.getString("product_image");
+
+                    if (imageText == null || imageText.trim().isEmpty()) {
+                        selectedProductImageBytes = null;
+                        showProductImage(null);
+                        return;
+                    }
+
+                    imageText = imageText.trim();
+
+                    try {
+                        File file = new File(imageText);
+
+                        if (file.exists()) {
+                            BufferedImage img = ImageIO.read(file);
+
+                            if (img != null) {
+                                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                ImageIO.write(img, "png", baos);
+                                selectedProductImageBytes = baos.toByteArray();
+                                showProductImage(selectedProductImageBytes);
+                                return;
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+
+                    try {
+                        if (imageText.startsWith("data:image")) {
+                            int commaIndex = imageText.indexOf(",");
+                            if (commaIndex != -1) {
+                                imageText = imageText.substring(commaIndex + 1);
+                            }
+                        }
+
+                        byte[] decoded = Base64.getDecoder().decode(imageText);
+                        selectedProductImageBytes = decoded;
+                        showProductImage(decoded);
+                        return;
+                    } catch (Exception ignored) {
+                    }
+
+                    selectedProductImageBytes = null;
+                    showProductImage(null);
+                } else {
+                    selectedProductImageBytes = null;
+                    showProductImage(null);
+                }
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            selectedProductImageBytes = null;
+            showProductImage(null);
+        }
+    }
+
+    private void loadSelectedCartProductImage() {
+        if (cartTable == null) {
+            showProductImage(null);
+            return;
+        }
+
+        int row = cartTable.getSelectedRow();
+        if (row == -1) {
+            showProductImage(null);
+            return;
+        }
+
+        int modelRow = cartTable.convertRowIndexToModel(row);
+        String barcode = String.valueOf(cartModel.getValueAt(modelRow, 1));
+        loadProductImageByBarcode(barcode);
+    }
+
+    // Clean version: createSummaryPanel
+    private JPanel createSummaryPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Color.WHITE);
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 0, 4, 10);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        Dimension fieldSize = new Dimension(120, 32);
+
+        int row = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("Subtotal Amount"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        subtotalTxt = createModernReadOnlyField();
+        subtotalTxt.setPreferredSize(fieldSize);
+        subtotalTxt.setMinimumSize(fieldSize);
+        subtotalTxt.setMaximumSize(fieldSize);
+        panel.add(subtotalTxt, gbc);
+        row++;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("VAT Amount"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        vatTxt = createModernReadOnlyField();
+        vatTxt.setPreferredSize(fieldSize);
+        vatTxt.setMinimumSize(fieldSize);
+        vatTxt.setMaximumSize(fieldSize);
+        panel.add(vatTxt, gbc);
+        row++;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("Discount Amount"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        discountTxt = createModernReadOnlyField();
+        discountTxt.setPreferredSize(fieldSize);
+        discountTxt.setMinimumSize(fieldSize);
+        discountTxt.setMaximumSize(fieldSize);
+        panel.add(discountTxt, gbc);
+        row++;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("Total Amount"), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        totalTxt = createModernReadOnlyField();
+        totalTxt.setPreferredSize(fieldSize);
+        totalTxt.setMinimumSize(fieldSize);
+        totalTxt.setMaximumSize(fieldSize);
+        totalTxt.setForeground(SUCCESS);
+        totalTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        panel.add(totalTxt, gbc);
+
+        return panel;
+    }
+
+    private JPanel createPaymentTabsPanel() {
+        return createPaymentTabsPanel(false);
+    }
+
+    // Overload for small/large tabs
+    private JPanel createPaymentTabsPanel(boolean smallTabs) {
+        JPanel tabPanel = new JPanel();
+        tabPanel.setLayout(new GridBagLayout());
+        tabPanel.setBackground(Color.WHITE);
+        tabPanel.setBorder(new EmptyBorder(0, 0, 8, 0));
+        tabPanel.setPreferredSize(null);
+        tabPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+
+        cashTabBtn = createPaymentTabButton("Cash", smallTabs);
+        gcashTabBtn = createPaymentTabButton("GCash", smallTabs);
+        cardTabBtn = createPaymentTabButton("Card", smallTabs);
+
+        cashTabBtn.addActionListener(e -> {
+            setActiveTab("Cash", cashTabBtn);
+            showPaymentPanel("Cash");
+        });
+        gcashTabBtn.addActionListener(e -> {
+            setActiveTab("GCash", gcashTabBtn);
+            showPaymentPanel("GCash");
+        });
+        cardTabBtn.addActionListener(e -> {
+            JOptionPane.showMessageDialog(posPanel, "Card payment is still not available for today.");
+        });
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(0, 0, 0, 6);
+        gbc.gridy = 0;
+        gbc.gridx = 0;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        tabPanel.add(cashTabBtn, gbc);
+        gbc.gridx = 1;
+        tabPanel.add(gcashTabBtn, gbc);
+        gbc.gridx = 2;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        tabPanel.add(cardTabBtn, gbc);
+
+        // Payment content panel is created here for use in buildPaymentPanel
+        paymentContentPanel = new JPanel(new CardLayout());
+        paymentContentPanel.setBackground(Color.WHITE);
+        paymentContentPanel.add(createPaymentFormPanel("Cash"), "Cash");
+        paymentContentPanel.add(createPaymentFormPanel("GCash"), "GCash");
+        paymentContentPanel.add(createPaymentFormPanel("Card"), "Card");
+
+        setActiveTab("Cash", cashTabBtn);
+        showPaymentPanel("Cash");
+
+        cardTabBtn.setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
+        cardTabBtn.setToolTipText("Card payment is still not available for today.");
+
+        return tabPanel;
+    }
+    
+
+    private JButton createPaymentTabButton(String text) {
+        return createPaymentTabButton(text, false);
+    }
+
+    // Overload for small/large tab buttons
+    private JButton createPaymentTabButton(String text, boolean small) {
+        JButton button = new JButton(text);
+        button.setFont(new Font("Segoe UI", Font.BOLD, small ? 12 : 14));
+        button.setFocusPainted(false);
+        button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        button.setBackground(new Color(229, 231, 235));
+        button.setForeground(new Color(55, 65, 81));
+        button.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(new Color(209, 213, 219), 1, true),
+                new EmptyBorder(small ? 6 : 10, small ? 18 : 32, small ? 6 : 32, small ? 18 : 32)
+        ));
+        button.setPreferredSize(new Dimension(small ? 70 : 110, small ? 28 : 38));
+        button.setFocusPainted(false);
+        button.setContentAreaFilled(true);
+        button.setOpaque(true);
+        button.setMargin(new Insets(0, 0, 0, 0));
+
+        // Rounded corners and subtle shadow
+        button.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(new Color(209, 213, 219), 1, true),
+                new EmptyBorder(small ? 6 : 10, small ? 18 : 32, small ? 6 : 10, small ? 18 : 32)
+        ));
+
+        button.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                if (!button.getBackground().equals(new Color(74, 144, 226))) {
+                    button.setBackground(new Color(243, 244, 246));
+                }
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                if (!button.getBackground().equals(new Color(74, 144, 226))) {
+                    button.setBackground(new Color(229, 231, 235));
+                }
+            }
+        });
+
+        return button;
+    }
+
+    private JPanel createPaymentFormPanel(String method) {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(new EmptyBorder(0, 0, 0, 0));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 0, 4, 10);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+
+        int row = 0;
+
+        // ...existing code...
+        gbc.gridwidth = 1;
+        gbc.insets = new Insets(6, 0, 6, 10);
+
+        switch (method) {
+            case "Cash":
+                row = addCashFields(panel, gbc, row);
+                break;
+            case "GCash":
+                row = addGCashFields(panel, gbc, row);
+                break;
+            case "Card":
+                row = addCardFields(panel, gbc, row);
+                break;
+        }
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weighty = 1.0;
+        gbc.fill = GridBagConstraints.VERTICAL;
+        panel.add(Box.createVerticalGlue(), gbc);
+
+        return panel;
+    }
+
+    private int addCashFields(JPanel panel, GridBagConstraints gbc, int row) {
+        Dimension fieldSize = new Dimension(120, 32);
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("Cash Tendered"), gbc);
+        gbc.gridx = 1;
+        cashTenderedTxt = createModernEditableField();
+        cashTenderedTxt.setHorizontalAlignment(SwingConstants.RIGHT);
+        cashTenderedTxt.setPreferredSize(fieldSize);
+        cashTenderedTxt.setMinimumSize(fieldSize);
+        cashTenderedTxt.setMaximumSize(fieldSize);
+        installEditableMoneyField(cashTenderedTxt, true);
+        panel.add(cashTenderedTxt, gbc);
+        row++;
+
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("Change Amount"), gbc);
+        gbc.gridx = 1;
+        changeTxt = createModernReadOnlyField();
+        changeTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        changeTxt.setForeground(new Color(59, 130, 246));
+        changeTxt.setPreferredSize(fieldSize);
+        changeTxt.setMinimumSize(fieldSize);
+        changeTxt.setMaximumSize(fieldSize);
+        panel.add(changeTxt, gbc);
+        row++;
+
+        return row;
+    }
+
+    private int addGCashFields(JPanel panel, GridBagConstraints gbc, int row) {
+        Dimension fieldSize = new Dimension(120, 32);
+
+        gbc.gridx = 0; gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("Customer No"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        gcashNumberTxt = createModernEditableField();
+        installDigitsOnlyField(gcashNumberTxt, 11);
+        gcashNumberTxt.setPreferredSize(fieldSize);
+        gcashNumberTxt.setMinimumSize(fieldSize);
+        gcashNumberTxt.setMaximumSize(fieldSize);
+        gcashNumberTxt.setToolTipText("Enter exactly 11 digits.");
+        panel.add(gcashNumberTxt, gbc);
+        row++;
+
+        gbc.gridx = 0; gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("GCash Reference No."), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        gcashReferenceTxt = createModernEditableField();
+        gcashReferenceTxt.setPreferredSize(fieldSize);
+        gcashReferenceTxt.setMinimumSize(fieldSize);
+        gcashReferenceTxt.setMaximumSize(fieldSize);
+        panel.add(gcashReferenceTxt, gbc);
+        row++;
+
+
+        gbc.gridx = 0; gbc.gridy = row;
+        gbc.weightx = 0.4;
+        panel.add(createFormLabel("Amount Paid"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 0.6;
+        gcashAmountTxt = createModernReadOnlyField();
+        gcashAmountTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        gcashAmountTxt.setForeground(new Color(59, 130, 246));
+        gcashAmountTxt.setPreferredSize(fieldSize);
+        gcashAmountTxt.setMinimumSize(fieldSize);
+        gcashAmountTxt.setMaximumSize(fieldSize);
+        panel.add(gcashAmountTxt, gbc);
+        row++;
+
+        return row;
+    }
+
+    private int addCardFields(JPanel panel, GridBagConstraints gbc, int row) {
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("Card Number"), gbc);
+        gbc.gridx = 1;
+        cardNumberTxt = createModernEditableField();
+        panel.add(cardNumberTxt, gbc);
+        row++;
+
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("Card Holder"), gbc);
+        gbc.gridx = 1;
+        cardHolderTxt = createModernEditableField();
+        panel.add(cardHolderTxt, gbc);
+        row++;
+
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("Expiry Date"), gbc);
+        gbc.gridx = 1;
+        cardExpiryTxt = createModernEditableField();
+        panel.add(cardExpiryTxt, gbc);
+        row++;
+
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("CVV"), gbc);
+        gbc.gridx = 1;
+        cardCvvTxt = createModernEditableField();
+        panel.add(cardCvvTxt, gbc);
+        row++;
+
+        gbc.gridx = 0; gbc.gridy = row;
+        panel.add(createFormLabel("Amount Paid"), gbc);
+        gbc.gridx = 1;
+        cardAmountTxt = createModernReadOnlyField();
+        cardAmountTxt.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        cardAmountTxt.setForeground(new Color(59, 130, 246));
+        panel.add(cardAmountTxt, gbc);
+        row++;
+
+        return row;
+    }
+
+    private JLabel createFormLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        label.setForeground(new Color(55, 65, 81));
+        return label;
+    }
+
+    private JTextField createModernReadOnlyField() {
+        JTextField field = new JTextField("₱0.00");
+        field.setEditable(false);
+        field.setHorizontalAlignment(SwingConstants.RIGHT);
+        field.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        field.setBackground(new Color(249, 250, 251));
+        field.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(new Color(209, 213, 219), 1),
+                new EmptyBorder(8, 12, 8, 12)
+        ));
+        field.setOpaque(true);
+        return field;
+    }
+
+    private JTextField createModernEditableField() {
+        JTextField field = new JTextField();
+        field.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        field.setBackground(Color.WHITE);
+        field.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(new Color(209, 213, 219), 1),
+                new EmptyBorder(8, 12, 8, 12)
+        ));
+        field.setOpaque(true);
+        return field;
+    }
+
+    private void setActiveTab(String method, JButton activeBtn) {
+        currentPaymentMethod = method;
+
+        JButton[] tabs = {cashTabBtn, gcashTabBtn, cardTabBtn};
+        for (JButton tab : tabs) {
+            if (tab != null) {
+                tab.setBackground(new Color(229, 231, 235));
+                tab.setForeground(new Color(55, 65, 81));
+                tab.setBorder(BorderFactory.createCompoundBorder(
+                        new LineBorder(new Color(209, 213, 219), 1),
+                        new EmptyBorder(10, 20, 10, 20)
+                ));
+            }
+        }
+
+        if (activeBtn != null) {
+            activeBtn.setBackground(new Color(74, 144, 226));
+            activeBtn.setForeground(Color.WHITE);
+            activeBtn.setBorder(BorderFactory.createCompoundBorder(
+                    new LineBorder(new Color(53, 122, 189), 1),
+                    new EmptyBorder(10, 20, 10, 20)
+            ));
+        }
+
+        updatePaymentMethod();
+    }
+
+    private void showPaymentPanel(String method) {
+        CardLayout cl = (CardLayout) paymentContentPanel.getLayout();
+        cl.show(paymentContentPanel, method);
     }
 
     private void buildButtonPanel() {
@@ -464,13 +1160,10 @@ public class PosController {
 
     private void wireEvents() {
         addItemBtn.addActionListener(e -> addProduct());
-        minusQtyBtn.addActionListener(e -> minusSelectedItemQty());
         removeItemBtn.addActionListener(e -> removeSelectedItem());
         searchProductBtn.addActionListener(e -> openProductSearchPopup());
 
         barcodeTxt.addActionListener(e -> qtySpinner.requestFocusInWindow());
-
-        paymentMethodCmb.addActionListener(e -> updateChange());
 
         checkoutBtn.addActionListener(e -> checkoutSale());
 
@@ -501,6 +1194,15 @@ public class PosController {
                     loadSelectedCartRowToInputs();
                 }
             }
+        });
+        
+        barcodeTxt.addActionListener(e -> {
+            String barcode = barcodeTxt.getText().trim();
+            loadProductImageByBarcode(barcode);
+        });
+        
+        barcodeTxt.addActionListener(e -> {
+            loadProductImageByBarcode(barcodeTxt.getText().trim());
         });
     }
 
@@ -579,6 +1281,40 @@ public class PosController {
         if (text == null || text.isEmpty()) return false;
         if (text.length() < 6) return false;
         return text.matches("[A-Za-z0-9\\-]+");
+    }
+
+    private void installDigitsOnlyField(JTextField field, int maxLength) {
+        ((AbstractDocument) field.getDocument()).setDocumentFilter(new DocumentFilter() {
+            @Override
+            public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr)
+                    throws BadLocationException {
+                if (string == null) {
+                    return;
+                }
+
+                String oldText = fb.getDocument().getText(0, fb.getDocument().getLength());
+                String candidate = new StringBuilder(oldText).insert(offset, string).toString();
+                if (candidate.matches("\\d{0," + maxLength + "}")) {
+                    super.insertString(fb, offset, string, attr);
+                }
+            }
+
+            @Override
+            public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs)
+                    throws BadLocationException {
+                String replacement = (text == null) ? "" : text;
+                String oldText = fb.getDocument().getText(0, fb.getDocument().getLength());
+                String candidate = new StringBuilder(oldText).replace(offset, offset + length, replacement).toString();
+                if (candidate.matches("\\d{0," + maxLength + "}")) {
+                    super.replace(fb, offset, length, text, attrs);
+                }
+            }
+
+            @Override
+            public void remove(FilterBypass fb, int offset, int length) throws BadLocationException {
+                super.remove(fb, offset, length);
+            }
+        });
     }
 
     
@@ -701,28 +1437,75 @@ public class PosController {
     private void resetPOS() {
         clearCart();
         clearItemEntryFields();
-        subtotalTxt.setText("₱0.00");
-        vatTxt.setText("₱0.00");
-        discountTxt.setText("₱0.00");
-        totalTxt.setText("₱0.00");
+        
+        selectedProductImageBytes = null;
+        showProductImage(null);
 
-        suppressCashTenderedListener = true;
-        try {
-            cashTenderedTxt.setText("");
-        } finally {
-            suppressCashTenderedListener = false;
+        if (subtotalTxt != null) {
+            subtotalTxt.setText("₱0.00");
+        }
+        if (vatTxt != null) {
+            vatTxt.setText("₱0.00");
+        }
+        if (discountTxt != null) {
+            discountTxt.setText("₱0.00");
+        }
+        if (totalTxt != null) {
+            totalTxt.setText("₱0.00");
         }
 
-        changeTxt.setText("₱0.00");
-        paymentMethodCmb.setSelectedItem("Cash");
-        invoiceLbl.setText("Invoice: " + generateInvoiceNo());
+        if (cashTenderedTxt != null) {
+            cashTenderedTxt.setText("");
+        }
+        if (changeTxt != null) {
+            changeTxt.setText("₱0.00");
+        }
+
+        if (gcashNumberTxt != null) {
+            gcashNumberTxt.setText("");
+        }
+        if (gcashReferenceTxt != null) {
+            gcashReferenceTxt.setText("");
+        }
+        if (gcashAmountTxt != null) {
+            gcashAmountTxt.setText("₱0.00");
+        }
+
+        if (cardNumberTxt != null) {
+            cardNumberTxt.setText("");
+        }
+        if (cardHolderTxt != null) {
+            cardHolderTxt.setText("");
+        }
+        if (cardExpiryTxt != null) {
+            cardExpiryTxt.setText("");
+        }
+        if (cardCvvTxt != null) {
+            cardCvvTxt.setText("");
+        }
+        if (cardAmountTxt != null) {
+            cardAmountTxt.setText("₱0.00");
+        }
+
+        currentPaymentMethod = "Cash";
+        if (cashTabBtn != null && paymentContentPanel != null) {
+            setActiveTab("Cash", cashTabBtn);
+            showPaymentPanel("Cash");
+        }
+
+        if (invoiceLbl != null) {
+            invoiceLbl.setText("Invoice: " + generateInvoiceNo());
+        }
 
         SwingUtilities.invokeLater(() -> {
-            updateChange();
-            barcodeTxt.requestFocusInWindow();
+            updatePaymentMethod();
+            if (barcodeTxt != null) {
+                barcodeTxt.requestFocusInWindow();
+            }
         });
     }
 
+    
     private void clearCart() {
         if (cartModel != null) {
             cartModel.setRowCount(0);
@@ -848,6 +1631,7 @@ public class PosController {
             qtySpinner.setValue(1);
             itemDiscountTxt.setText("0.00");
             cartTable.clearSelection();
+            loadProductImageByBarcode(barcode);
             barcodeTxt.requestFocusInWindow();
 
             dialog.dispose();
@@ -879,6 +1663,7 @@ public class PosController {
 
         if (product == null) {
             JOptionPane.showMessageDialog(posPanel, "Product not found.");
+            showProductImage(null);
             barcodeTxt.requestFocusInWindow();
             barcodeTxt.selectAll();
             return;
@@ -897,8 +1682,10 @@ public class PosController {
             return;
         }
 
+        loadProductImageByBarcode(barcode);
         upsertCartItem(product, qty, discount);
         clearItemEntryFields();
+        calculateTotals();
     }
 
     private void upsertCartItem(ProductData product, int enteredQty, BigDecimal enteredDiscount) {
@@ -928,7 +1715,7 @@ public class PosController {
                 cartModel.setValueAt(enteredDiscount, modelRow, 5);
                 cartModel.setValueAt(subtotal, modelRow, 6);
 
-                computeTotals();
+                calculateTotals();
                 cartTable.setRowSelectionInterval(modelRow, modelRow);
                 return;
             }
@@ -963,7 +1750,7 @@ public class PosController {
                 cartModel.setValueAt(newDiscount, i, 5);
                 cartModel.setValueAt(subtotal, i, 6);
 
-                computeTotals();
+                calculateTotals();
                 cartTable.setRowSelectionInterval(i, i);
                 return;
             }
@@ -993,7 +1780,7 @@ public class PosController {
                 subtotal
         });
 
-        computeTotals();
+        calculateTotals();
         int lastRow = cartModel.getRowCount() - 1;
         cartTable.setRowSelectionInterval(lastRow, lastRow);
     }
@@ -1047,7 +1834,7 @@ public class PosController {
         cartModel.setValueAt(discount, modelRow, 5);
         cartModel.setValueAt(subtotal, modelRow, 6);
 
-        computeTotals();
+        calculateTotals();
         cartTable.setRowSelectionInterval(modelRow, modelRow);
     }
 
@@ -1069,9 +1856,21 @@ public class PosController {
         if (confirm == JOptionPane.YES_OPTION) {
             int modelRow = cartTable.convertRowIndexToModel(row);
             cartModel.removeRow(modelRow);
-            computeTotals();
+            calculateTotals();
             clearItemEntryFields();
         }
+            // Listen for quantity or discount changes in the table
+            cartModel.addTableModelListener(e -> calculateTotals());
+
+            // Listen for changes in cashTenderedTxt to update change
+            cashTenderedTxt.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                @Override
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { calculateTotals(); }
+                @Override
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { calculateTotals(); }
+                @Override
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { calculateTotals(); }
+            });
     }
 
     private void loadSelectedCartRowToInputs() {
@@ -1093,76 +1892,99 @@ public class PosController {
     }
 
     private void computeTotals() {
-        BigDecimal grossSubtotal = BigDecimal.ZERO;
-        BigDecimal discount = BigDecimal.ZERO;
+        // (Replaced by calculateTotals)
+    }
 
-        for (int i = 0; i < cartModel.getRowCount(); i++) {
-            int qty = Integer.parseInt(String.valueOf(cartModel.getValueAt(i, 3)));
-            BigDecimal unitPrice = parseMoney(String.valueOf(cartModel.getValueAt(i, 4)));
-            BigDecimal rowDiscount = parseMoney(String.valueOf(cartModel.getValueAt(i, 5)));
-
-            grossSubtotal = grossSubtotal.add(unitPrice.multiply(BigDecimal.valueOf(qty)));
-            discount = discount.add(rowDiscount);
+    private void updatePaymentMethod() {
+        if (updatingPaymentUI) {
+            return;
+        }
+        if (totalTxt == null) {
+            return;
         }
 
-        BigDecimal taxable = grossSubtotal.subtract(discount);
-        if (taxable.compareTo(BigDecimal.ZERO) < 0) {
-            taxable = BigDecimal.ZERO;
+        try {
+            updatingPaymentUI = true;
+            BigDecimal total = parseMoney(totalTxt.getText());
+
+            if ("Cash".equalsIgnoreCase(currentPaymentMethod)) {
+                if (cashTenderedTxt != null) {
+                    cashTenderedTxt.setEditable(true);
+                    cashTenderedTxt.setEnabled(true);
+                    cashTenderedTxt.setBackground(Color.WHITE);
+                    updateChange();
+                }
+            } else if ("GCash".equalsIgnoreCase(currentPaymentMethod)) {
+                if (cashTenderedTxt != null) {
+                    cashTenderedTxt.setEditable(false);
+                    cashTenderedTxt.setEnabled(false);
+                    cashTenderedTxt.setBackground(FIELD_BG);
+                }
+                if (gcashAmountTxt != null) {
+                    gcashAmountTxt.setText(formatPeso(total));
+                }
+                if (changeTxt != null) {
+                    changeTxt.setText("₱0.00");
+                }
+            } else if ("Card".equalsIgnoreCase(currentPaymentMethod)) {
+                if (cashTenderedTxt != null) {
+                    cashTenderedTxt.setEditable(false);
+                    cashTenderedTxt.setEnabled(false);
+                    cashTenderedTxt.setBackground(FIELD_BG);
+                }
+                if (cardAmountTxt != null) {
+                    cardAmountTxt.setText(formatPeso(total));
+                }
+                if (changeTxt != null) {
+                    changeTxt.setText("₱0.00");
+                }
+            }
+        } finally {
+            updatingPaymentUI = false;
         }
-
-        BigDecimal vat = cartModel.getRowCount() > 0 ? DEFAULT_VAT : BigDecimal.ZERO;
-        BigDecimal total = taxable.add(vat);
-
-        subtotalTxt.setText(formatPeso(grossSubtotal));
-        discountTxt.setText(formatPeso(discount));
-        vatTxt.setText(formatPeso(vat));
-        totalTxt.setText(formatPeso(total));
-
-        updateChange();
     }
 
     private void updateChange() {
         if (updatingPaymentUI) {
             return;
         }
+        if (totalTxt == null) {
+            return;
+        }
 
         updatingPaymentUI = true;
         try {
-            String paymentMethod = String.valueOf(paymentMethodCmb.getSelectedItem());
             BigDecimal total = parseMoney(totalTxt.getText());
 
-            if ("Cash".equalsIgnoreCase(paymentMethod)) {
-                cashTenderedTxt.setEditable(true);
-                cashTenderedTxt.setEnabled(true);
-                cashTenderedTxt.setBackground(Color.WHITE);
+            if ("Cash".equalsIgnoreCase(currentPaymentMethod)) {
+                BigDecimal cash = BigDecimal.ZERO;
+                if (cashTenderedTxt != null) {
+                    cash = parseMoney(cashTenderedTxt.getText());
+                }
 
-                BigDecimal cash = parseMoney(cashTenderedTxt.getText());
                 BigDecimal change = cash.subtract(total);
 
-                if (change.compareTo(BigDecimal.ZERO) < 0) {
-                    changeTxt.setText("₱0.00");
-                } else {
-                    changeTxt.setText(formatPeso(change));
-                }
-
-            } else {
-                cashTenderedTxt.setEditable(false);
-                cashTenderedTxt.setEnabled(false);
-                cashTenderedTxt.setBackground(FIELD_BG);
-
-                String targetText = formatMoney(total);
-
-                if (!targetText.equals(cashTenderedTxt.getText())) {
-                    suppressCashTenderedListener = true;
-                    try {
-                        cashTenderedTxt.setText(targetText);
-                    } finally {
-                        suppressCashTenderedListener = false;
+                if (changeTxt != null) {
+                    if (change.compareTo(BigDecimal.ZERO) < 0) {
+                        changeTxt.setText("₱0.00");
+                    } else {
+                        changeTxt.setText(formatPeso(change));
                     }
                 }
-
-                changeTxt.setText("₱0.00");
+            } else {
+                if (changeTxt != null) {
+                    changeTxt.setText("₱0.00");
+                }
             }
+
+            if (gcashAmountTxt != null) {
+                gcashAmountTxt.setText(formatPeso(total));
+            }
+
+            if (cardAmountTxt != null) {
+                cardAmountTxt.setText(formatPeso(total));
+            }
+
         } finally {
             updatingPaymentUI = false;
         }
@@ -1174,7 +1996,7 @@ public class PosController {
             return;
         }
 
-        String paymentMethod = String.valueOf(paymentMethodCmb.getSelectedItem());
+        String paymentMethod = currentPaymentMethod;
         BigDecimal totalAmount = parseMoney(totalTxt.getText());
         BigDecimal subtotalAmount = parseMoney(subtotalTxt.getText());
         BigDecimal vatAmount = parseMoney(vatTxt.getText());
@@ -1190,9 +2012,42 @@ public class PosController {
                 JOptionPane.showMessageDialog(posPanel, "Insufficient cash tendered.");
                 return;
             }
-        } else {
-            // GCash and Card
+
+        } else if ("GCash".equalsIgnoreCase(paymentMethod)) {
+            String gcashCustomerNo = gcashNumberTxt.getText().trim();
+
+            if (gcashCustomerNo.isEmpty()) {
+                JOptionPane.showMessageDialog(posPanel, "Customer No is required for GCash.");
+                return;
+            }
+
+            if (!gcashCustomerNo.matches("\\d{11}")) {
+                JOptionPane.showMessageDialog(posPanel, "Customer No must be exactly 11 digits.");
+                return;
+            }
+
+            if (gcashReferenceTxt.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(posPanel, "GCash Reference No. is required.");
+                return;
+            }
+
             cashTendered = totalAmount;
+            changeAmount = BigDecimal.ZERO;
+
+        } else if ("Card".equalsIgnoreCase(paymentMethod)) {
+            if (cardNumberTxt.getText().trim().isEmpty()
+                    || cardHolderTxt.getText().trim().isEmpty()
+                    || cardExpiryTxt.getText().trim().isEmpty()
+                    || cardCvvTxt.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(posPanel, "Complete card details first.");
+                return;
+            }
+
+            cashTendered = totalAmount;
+            changeAmount = BigDecimal.ZERO;
+
+        } else {
+            cashTendered = BigDecimal.ZERO;
             changeAmount = BigDecimal.ZERO;
         }
 
@@ -1371,7 +2226,7 @@ public class PosController {
         sb.append("           STOCKWISE POS RECEIPT        \n");
         sb.append("========================================\n");
         sb.append("Invoice : ").append(invoiceNo).append("\n");
-        sb.append("Cashier : ").append(loggedInUsername).append("\n");
+        sb.append("Cashier : ").append(getCashierDisplayName()).append("\n");
         sb.append("Date    : ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).append("\n");
         sb.append("----------------------------------------\n");
 
@@ -1403,6 +2258,13 @@ public class PosController {
         sb.append("========================================\n");
 
         return sb.toString();
+    }
+
+    private String getCashierDisplayName() {
+        if (loggedInFullName != null && !loggedInFullName.trim().isEmpty()) {
+            return loggedInFullName.trim();
+        }
+        return loggedInUsername;
     }
 
     private void showReceiptDialog(String receiptText) {

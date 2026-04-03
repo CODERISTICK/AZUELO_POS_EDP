@@ -5,7 +5,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import javax.swing.JOptionPane;
 import javax.swing.JTable;
-import javax.swing.JTextField;
 import javax.swing.table.DefaultTableModel;
 
 public class Category {
@@ -14,6 +13,57 @@ public class Category {
 
     public Category() {
         con = DBConnection.getConnection();
+    }
+
+    // CHECK DUPLICATE CATEGORY NAME
+    public boolean isCategoryNameExists(String name) {
+        if (con == null) {
+            System.err.println("Database connection is null");
+            return false;
+        }
+        
+        try {
+            String sql = "SELECT COUNT(*) FROM categories WHERE name = ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, name);
+            ResultSet rs = pst.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+            rs.close();
+            pst.close();
+        } catch (Exception e) {
+            System.err.println("Error checking category name: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    // CHECK DUPLICATE CATEGORY NAME (FOR UPDATE)
+    public boolean isCategoryNameExists(String name, String oldName) {
+        if (con == null) {
+            System.err.println("Database connection is null");
+            return false;
+        }
+        
+        try {
+            String sql = "SELECT COUNT(*) FROM categories WHERE name = ? AND name != ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, name);
+            pst.setString(2, oldName);
+            ResultSet rs = pst.executeQuery();
+
+            if (rs.next()) {
+                return rs.getInt(1) > 0;
+            }
+            rs.close();
+            pst.close();
+        } catch (Exception e) {
+            System.err.println("Error checking category name: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return false;
     }
 
     // LOAD ALL CATEGORIES
@@ -111,24 +161,50 @@ public class Category {
     }
 
     // DELETE CATEGORY
-    public void deleteCategory(int id) {
+    // DELETE CATEGORY (SAFE DELETE)
+    // DELETE CATEGORY
+public void deleteCategory(int id) {
 
         try {
+            // Check first if there are products using this category
+            String checkSql = "SELECT COUNT(*) FROM products WHERE category_id = ?";
+            PreparedStatement checkPst = con.prepareStatement(checkSql);
+            checkPst.setInt(1, id);
 
-            String sql = "DELETE FROM categories WHERE category_id=?";
+            ResultSet rs = checkPst.executeQuery();
 
+            if (rs.next() && rs.getInt(1) > 0) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        "Cannot delete this category because there are existing products under it.",
+                        "Delete Not Allowed",
+                        JOptionPane.WARNING_MESSAGE
+                );
+                return;
+            }
+
+            // Delete only if no products are using it
+            String sql = "DELETE FROM categories WHERE category_id = ?";
             PreparedStatement pst = con.prepareStatement(sql);
-
             pst.setInt(1, id);
 
-            pst.executeUpdate();
+            int rowsDeleted = pst.executeUpdate();
 
-            JOptionPane.showMessageDialog(null, "Category deleted successfully!");
+            if (rowsDeleted > 0) {
+                JOptionPane.showMessageDialog(null, "Category deleted successfully!");
+            } else {
+                JOptionPane.showMessageDialog(null, "Category not found.");
+            }
 
         } catch (Exception e) {
+            JOptionPane.showMessageDialog(
+                    null,
+                    "Error deleting category: " + e.getMessage(),
+                    "Database Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
             e.printStackTrace();
         }
-
     }
 
     // SEARCH CATEGORY (LIVE SEARCH)

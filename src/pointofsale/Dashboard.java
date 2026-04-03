@@ -27,6 +27,29 @@ public class Dashboard {
             JLabel outOfStockdashboard_lbl,
             JLabel totalCategory_lbl,
             JLabel totalTransaction_lbl) {
+        loadDashboardStats(
+            totalProduct_lbl,
+            totalSupplier_lbl,
+            totalUser_lbl,
+            lowstockDashboad_lbl,
+            totalSalesDashboard,
+            outOfStockdashboard_lbl,
+            totalCategory_lbl,
+            totalTransaction_lbl,
+            "TODAY"
+        );
+        }
+
+        public void loadDashboardStats(
+            JLabel totalProduct_lbl,
+            JLabel totalSupplier_lbl,
+            JLabel totalUser_lbl,
+            JLabel lowstockDashboad_lbl,
+            JLabel totalSalesDashboard,
+            JLabel outOfStockdashboard_lbl,
+            JLabel totalCategory_lbl,
+            JLabel totalTransaction_lbl,
+            String salesPeriod) {
 
         try {
 
@@ -69,12 +92,30 @@ public class Dashboard {
             outOfStockdashboard_lbl.setText(rs.next() ? rs.getString("total") : "0");
 
             /* TOTAL SALES */
-            pst = con.prepareStatement(
-                    "SELECT IFNULL(SUM(total_amount),0) AS total FROM sales");
+            String normalizedPeriod = salesPeriod == null ? "TODAY" : salesPeriod.trim().toUpperCase();
+            String salesSql = "SELECT IFNULL(SUM(total_amount),0) AS total FROM sales";
+
+            switch (normalizedPeriod) {
+                case "WEEK":
+                    salesSql += " WHERE YEARWEEK(sale_date, 1) = YEARWEEK(CURDATE(), 1)";
+                    break;
+                case "MONTH":
+                    salesSql += " WHERE YEAR(sale_date) = YEAR(CURDATE()) AND MONTH(sale_date) = MONTH(CURDATE())";
+                    break;
+                case "YEAR":
+                    salesSql += " WHERE YEAR(sale_date) = YEAR(CURDATE())";
+                    break;
+                case "TODAY":
+                default:
+                    salesSql += " WHERE DATE(sale_date) = CURDATE()";
+                    break;
+            }
+
+            pst = con.prepareStatement(salesSql);
             rs = pst.executeQuery();
             totalSalesDashboard.setText(rs.next()
-                    ? "₱" + rs.getString("total")
-                    : "₱0");
+                    ? String.format("₱%.2f", rs.getDouble("total"))
+                    : "₱0.00");
 
             /* TOTAL TRANSACTION */
             pst = con.prepareStatement(
@@ -91,35 +132,40 @@ public class Dashboard {
        TOP SELLING PRODUCTS
        ========================= */
     public void loadTopSellingProducts(JTable dashboard_tbl) {
-
         try {
-
-            DefaultTableModel model = (DefaultTableModel) dashboard_tbl.getModel();
-            model.setRowCount(0);
-
             Connection con = DBConnection.getConnection();
 
-            String sql =
-                    "SELECT p.name, SUM(si.quantity) qty_sold, " +
-                    "SUM(si.total_price) total_sales " +
-                    "FROM sale_items si " +
-                    "JOIN products p ON si.product_id = p.product_id " +
-                    "GROUP BY p.name " +
-                    "ORDER BY qty_sold DESC LIMIT 5";
+            String sql
+                    = "SELECT p.name, SUM(si.quantity) AS qty_sold, "
+                    + "SUM(si.total_price) AS total_sales "
+                    + "FROM sale_items si "
+                    + "JOIN products p ON si.product_id = p.product_id "
+                    + "GROUP BY p.product_id, p.name "
+                    + "ORDER BY qty_sold DESC "
+                    + "LIMIT 5";
 
             PreparedStatement pst = con.prepareStatement(sql);
             ResultSet rs = pst.executeQuery();
 
-            while (rs.next()) {
+            // Rebuild table model every load to prevent duplicates
+            DefaultTableModel model = new DefaultTableModel(
+                    new Object[]{"Product Name", "Qty Sold", "Total Sales"}, 0
+            ) {
+                @Override
+                public boolean isCellEditable(int row, int column) {
+                    return false;
+                }
+            };
 
-                Object[] row = {
+            while (rs.next()) {
+                model.addRow(new Object[]{
                     rs.getString("name"),
                     rs.getInt("qty_sold"),
-                    "₱" + rs.getDouble("total_sales")
-                };
-
-                model.addRow(row);
+                    String.format("₱%.2f", rs.getDouble("total_sales"))
+                });
             }
+
+            dashboard_tbl.setModel(model);
 
         } catch (Exception e) {
             e.printStackTrace();
