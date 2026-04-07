@@ -3,6 +3,7 @@ package pointofsale;
 import java.awt.Desktop;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -16,18 +17,6 @@ import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.JTable;
 import javax.swing.table.DefaultTableModel;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-
-
-import java.awt.Desktop;
-import java.io.File;
-import javax.swing.JFileChooser;
-import javax.swing.JOptionPane;
-import javax.swing.JTable;
-
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -130,68 +119,77 @@ public class Reports {
         DefaultTableModel model = (DefaultTableModel) reportTable.getModel();
         model.setRowCount(0);
 
-        StringBuilder sql = new StringBuilder(
-            "SELECT DATE(s.sale_date) AS report_date, " +
-            "s.invoice_number, " +
-            "p.name AS product_name, " +
-            "si.quantity, " +
-            "si.unit_price, " +
-            "si.discount, " +
-            "si.total_price AS sales, " +
-            "((si.unit_price - p.cost_price) * si.quantity - si.discount) AS profit " +
-            "FROM sales s " +
-            "JOIN sale_items si ON s.sale_id = si.sale_id " +
-            "JOIN products p ON si.product_id = p.product_id " +
-            "JOIN categories c ON p.category_id = c.category_id " +
-            "JOIN suppliers sp ON p.supplier_id = sp.supplier_id " +
-            "WHERE 1=1 "
-        );
+        String normalizedType = reportType == null ? "Daily Sales" : reportType.trim();
+        String costExpr = hasSaleItemsCostSnapshotColumn()
+                ? "COALESCE(si.cost_price_snapshot, COALESCE(p.cost_price, 0))"
+                : "COALESCE(p.cost_price, 0)";
 
-        if (startDate != null && !startDate.trim().isEmpty()) {
-            sql.append(" AND DATE(s.sale_date) >= ? ");
-        }
-        if (endDate != null && !endDate.trim().isEmpty()) {
-            sql.append(" AND DATE(s.sale_date) <= ? ");
-        }
-        if (category != null && !category.equals("All Categories")) {
-            sql.append(" AND c.name = ? ");
-        }
-        if (supplier != null && !supplier.equals("All Suppliers")) {
-            sql.append(" AND sp.name = ? ");
-        }
-        if (paymentMethod != null && !paymentMethod.equals("All")) {
-            sql.append(" AND s.payment_method = ? ");
-        }
-
-        if ("Daily Sales".equals(reportType)) {
-            sql.append(" ORDER BY DATE(s.sale_date) DESC, s.invoice_number ASC ");
-        } else if ("Sales by Product".equals(reportType)) {
-            sql.append(" ORDER BY p.name ASC, DATE(s.sale_date) DESC ");
-        } else if ("Profit Report".equals(reportType)) {
-            sql.append(" ORDER BY profit DESC ");
+        StringBuilder sql = new StringBuilder();
+        if ("Sales by Product".equalsIgnoreCase(normalizedType)) {
+            sql.append(
+                "SELECT MAX(DATE(s.sale_date)) AS report_date, " +
+                "'MULTIPLE' AS invoice_number, " +
+                "p.name AS product_name, " +
+                "SUM(si.quantity) AS quantity, " +
+                "AVG(si.unit_price) AS unit_price, " +
+                "SUM(si.discount) AS discount, " +
+                "SUM(si.total_price) AS sales, " +
+                "SUM(((si.unit_price - " + costExpr + ") * si.quantity) - si.discount) AS profit " +
+                "FROM sales s " +
+                "JOIN sale_items si ON s.sale_id = si.sale_id " +
+                "JOIN products p ON si.product_id = p.product_id " +
+                "LEFT JOIN categories c ON p.category_id = c.category_id " +
+                "LEFT JOIN suppliers sp ON p.supplier_id = sp.supplier_id " +
+                "WHERE 1=1 "
+            );
+            appendStandardFilters(sql, startDate, endDate, category, supplier, paymentMethod);
+            sql.append(" GROUP BY p.product_id, p.name ORDER BY sales DESC, p.name ASC ");
+        } else if ("Profit Report".equalsIgnoreCase(normalizedType)) {
+            sql.append(
+                "SELECT MAX(DATE(s.sale_date)) AS report_date, " +
+                "'MULTIPLE' AS invoice_number, " +
+                "p.name AS product_name, " +
+                "SUM(si.quantity) AS quantity, " +
+                "AVG(si.unit_price) AS unit_price, " +
+                "SUM(si.discount) AS discount, " +
+                "SUM(si.total_price) AS sales, " +
+                "SUM(((si.unit_price - " + costExpr + ") * si.quantity) - si.discount) AS profit " +
+                "FROM sales s " +
+                "JOIN sale_items si ON s.sale_id = si.sale_id " +
+                "JOIN products p ON si.product_id = p.product_id " +
+                "LEFT JOIN categories c ON p.category_id = c.category_id " +
+                "LEFT JOIN suppliers sp ON p.supplier_id = sp.supplier_id " +
+                "WHERE 1=1 "
+            );
+            appendStandardFilters(sql, startDate, endDate, category, supplier, paymentMethod);
+            sql.append(" GROUP BY p.product_id, p.name ORDER BY profit DESC, p.name ASC ");
         } else {
-            sql.append(" ORDER BY DATE(s.sale_date) DESC ");
+            sql.append(
+                "SELECT DATE(s.sale_date) AS report_date, " +
+                "s.invoice_number, " +
+                "p.name AS product_name, " +
+                "si.quantity, " +
+                "si.unit_price, " +
+                "si.discount, " +
+                "si.total_price AS sales, " +
+                "(((si.unit_price - " + costExpr + ") * si.quantity) - si.discount) AS profit " +
+                "FROM sales s " +
+                "JOIN sale_items si ON s.sale_id = si.sale_id " +
+                "JOIN products p ON si.product_id = p.product_id " +
+                "LEFT JOIN categories c ON p.category_id = c.category_id " +
+                "LEFT JOIN suppliers sp ON p.supplier_id = sp.supplier_id " +
+                "WHERE 1=1 "
+            );
+            appendStandardFilters(sql, startDate, endDate, category, supplier, paymentMethod);
+            sql.append(" ORDER BY DATE(s.sale_date) DESC, s.invoice_number ASC ");
         }
 
         try (Connection con = DBConnection.getConnection();
              PreparedStatement pst = con.prepareStatement(sql.toString())) {
 
-            int index = 1;
-
-            if (startDate != null && !startDate.trim().isEmpty()) {
-                pst.setString(index++, startDate);
-            }
-            if (endDate != null && !endDate.trim().isEmpty()) {
-                pst.setString(index++, endDate);
-            }
-            if (category != null && !category.equals("All Categories")) {
-                pst.setString(index++, category);
-            }
-            if (supplier != null && !supplier.equals("All Suppliers")) {
-                pst.setString(index++, supplier);
-            }
-            if (paymentMethod != null && !paymentMethod.equals("All")) {
-                pst.setString(index++, paymentMethod);
+            int index = applyStandardFilters(pst, startDate, endDate, category, supplier, paymentMethod);
+            if (index < 1) {
+                index = 1;
             }
 
             try (ResultSet rs = pst.executeQuery()) {
@@ -213,6 +211,75 @@ public class Reports {
             e.printStackTrace();
             JOptionPane.showMessageDialog(null, "Error generating report: " + e.getMessage());
         }
+    }
+
+    private boolean hasSaleItemsCostSnapshotColumn() {
+        String sql = "SELECT 1 FROM information_schema.columns "
+                + "WHERE table_schema = DATABASE() "
+                + "AND table_name = 'sale_items' "
+                + "AND column_name = 'cost_price_snapshot' LIMIT 1";
+
+        try (Connection con = DBConnection.getConnection();
+             PreparedStatement pst = con.prepareStatement(sql);
+             ResultSet rs = pst.executeQuery()) {
+            return rs.next();
+        } catch (SQLException ex) {
+            return false;
+        }
+    }
+
+    private void appendStandardFilters(
+            StringBuilder sql,
+            String startDate,
+            String endDate,
+            String category,
+            String supplier,
+            String paymentMethod
+    ) {
+        if (startDate != null && !startDate.trim().isEmpty()) {
+            sql.append(" AND DATE(s.sale_date) >= ? ");
+        }
+        if (endDate != null && !endDate.trim().isEmpty()) {
+            sql.append(" AND DATE(s.sale_date) <= ? ");
+        }
+        if (category != null && !"All Categories".equalsIgnoreCase(category.trim())) {
+            sql.append(" AND c.name = ? ");
+        }
+        if (supplier != null && !"All Suppliers".equalsIgnoreCase(supplier.trim())) {
+            sql.append(" AND sp.name = ? ");
+        }
+        if (paymentMethod != null && !"All".equalsIgnoreCase(paymentMethod.trim())) {
+            sql.append(" AND s.payment_method = ? ");
+        }
+    }
+
+    private int applyStandardFilters(
+            PreparedStatement pst,
+            String startDate,
+            String endDate,
+            String category,
+            String supplier,
+            String paymentMethod
+    ) throws SQLException {
+        int index = 1;
+
+        if (startDate != null && !startDate.trim().isEmpty()) {
+            pst.setString(index++, startDate.trim());
+        }
+        if (endDate != null && !endDate.trim().isEmpty()) {
+            pst.setString(index++, endDate.trim());
+        }
+        if (category != null && !"All Categories".equalsIgnoreCase(category.trim())) {
+            pst.setString(index++, category.trim());
+        }
+        if (supplier != null && !"All Suppliers".equalsIgnoreCase(supplier.trim())) {
+            pst.setString(index++, supplier.trim());
+        }
+        if (paymentMethod != null && !"All".equalsIgnoreCase(paymentMethod.trim())) {
+            pst.setString(index++, paymentMethod.trim());
+        }
+
+        return index;
     }
 
     public void exportTableToPDF(JTable table, String reportType) {
@@ -405,7 +472,7 @@ public class Reports {
             StringBuilder sb = new StringBuilder();
 
             for (int i = 0; i < table.getColumnCount(); i++) {
-                sb.append(table.getColumnName(i));
+                sb.append(escapeCsv(table.getColumnName(i)));
                 if (i < table.getColumnCount() - 1) {
                     sb.append(",");
                 }
@@ -415,8 +482,8 @@ public class Reports {
             for (int row = 0; row < table.getRowCount(); row++) {
                 for (int col = 0; col < table.getColumnCount(); col++) {
                     Object value = table.getValueAt(row, col);
-                    String text = value == null ? "" : value.toString().replace(",", " ");
-                    sb.append(text);
+                    String text = value == null ? "" : value.toString();
+                    sb.append(escapeCsv(text));
                     if (col < table.getColumnCount() - 1) {
                         sb.append(",");
                     }
@@ -424,7 +491,7 @@ public class Reports {
                 sb.append("\n");
             }
 
-            fos.write(sb.toString().getBytes());
+            fos.write(sb.toString().getBytes(StandardCharsets.UTF_8));
 
             JOptionPane.showMessageDialog(null, "Excel exported successfully:\n" + file.getAbsolutePath());
 
@@ -436,6 +503,15 @@ public class Reports {
             e.printStackTrace();
             JOptionPane.showMessageDialog(null, "Error exporting Excel: " + e.getMessage());
         }
+    }
+
+    private String escapeCsv(String text) {
+        if (text == null) {
+            return "";
+        }
+
+        String escaped = text.replace("\"", "\"\"");
+        return "\"" + escaped + "\"";
     }
 
     public String formatDateChooser(Date date) {

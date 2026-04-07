@@ -62,8 +62,8 @@ public class LoginScreen extends javax.swing.JFrame {
         });
         jPanel1.add(showPassword_chb, new org.netbeans.lib.awtextra.AbsoluteConstraints(230, 200, 130, 30));
 
-        btn_Login.setBackground(new java.awt.Color(51, 255, 102));
-        btn_Login.setForeground(new java.awt.Color(255, 255, 255));
+        btn_Login.setBackground(new java.awt.Color(7, 163, 46));
+        btn_Login.setForeground(new java.awt.Color(0, 0, 0));
         btn_Login.setText("LOGIN");
         btn_Login.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {

@@ -39,35 +39,37 @@ import javax.imageio.ImageIO;
 public class PosController {
     // --- Totals Calculation Logic ---
     private void calculateTotals() {
-        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal vatableSales = BigDecimal.ZERO;
         BigDecimal discount = BigDecimal.ZERO;
         BigDecimal vat = BigDecimal.ZERO;
         BigDecimal total = BigDecimal.ZERO;
 
-        // Sum all item subtotals and discounts
+        // Sum cart totals (VAT-inclusive prices) and line discounts.
         for (int i = 0; i < cartModel.getRowCount(); i++) {
-            Object subObj = cartModel.getValueAt(i, 6); // Subtotal column
+            Object totalObj = cartModel.getValueAt(i, 6); // Line total (after discount)
             Object discObj = cartModel.getValueAt(i, 5); // Discount column
             try {
-                String subStr = subObj != null ? subObj.toString().replace("₱", "").replace(",", "").trim() : "0";
+                String totalStr = totalObj != null ? totalObj.toString().replace("₱", "").replace(",", "").trim() : "0";
                 String discStr = discObj != null ? discObj.toString().replace("₱", "").replace(",", "").trim() : "0";
-                subtotal = subtotal.add(new BigDecimal(subStr));
+                total = total.add(new BigDecimal(totalStr));
                 discount = discount.add(new BigDecimal(discStr));
             } catch (Exception e) {
                 // ignore parse errors
             }
         }
 
-        // VAT is fixed or can be a percentage, here using DEFAULT_VAT as fixed
-        vat = cartModel.getRowCount() > 0 ? DEFAULT_VAT : BigDecimal.ZERO;
-        // If you want VAT as a percentage, use: vat = subtotal.multiply(new BigDecimal("0.12"));
-
-        // Total = subtotal + VAT - discount
-        total = subtotal.add(vat).subtract(discount);
         if (total.compareTo(BigDecimal.ZERO) < 0) total = BigDecimal.ZERO;
 
+        // PH default pricing is VAT-inclusive.
+        // VATable Sales = Total / 1.12
+        // VAT = Total - VATable Sales
+        if (cartModel.getRowCount() > 0) {
+            vatableSales = total.divide(VAT_INCLUSIVE_DIVISOR, 2, RoundingMode.HALF_UP);
+            vat = total.subtract(vatableSales).setScale(2, RoundingMode.HALF_UP);
+        }
+
         // Update fields (always update all payment fields regardless of tab)
-        subtotalTxt.setText(formatPeso(subtotal));
+        subtotalTxt.setText(formatPeso(vatableSales));
         vatTxt.setText(formatPeso(vat));
         discountTxt.setText(formatPeso(discount));
         totalTxt.setText(formatPeso(total));
@@ -119,6 +121,8 @@ public class PosController {
     private JButton searchProductBtn;
     private JButton addItemBtn;
     private JButton removeItemBtn;
+    private JButton refreshBtn;
+    private JLabel barcodeStatusBadge;
 
     // Cart
     private JTable cartTable;
@@ -161,9 +165,10 @@ public class PosController {
 
     private Timer dateTimer;
     private Timer scannerTimer;
+    private Timer barcodePreviewTimer;
 
-    // Default fixed VAT = ₱3.00
-    private static final BigDecimal DEFAULT_VAT = new BigDecimal("3.00");
+    private static final BigDecimal VAT_RATE = new BigDecimal("0.12");
+    private static final BigDecimal VAT_INCLUSIVE_DIVISOR = BigDecimal.ONE.add(VAT_RATE);
 
     private boolean formattingCashField = false;
     private boolean formattingDiscountField = false;
@@ -193,6 +198,10 @@ public class PosController {
     private final Color FIELD_BG = new Color(248, 250, 252);
     
     private JLabel productImageLbl;
+    private JPanel stockInfoPanel;
+    private JLabel stockLabelLbl;
+    private JLabel stockValueLbl;
+    private String currentPreviewBarcode;
     private byte[] selectedProductImageBytes;
     private final JPanel imagePanel;
 
@@ -336,11 +345,26 @@ public class PosController {
         removeItemBtn.setBounds(890, y, 100, 32);
         barcodePanel.add(removeItemBtn);
 
+        refreshBtn = createButton("REFRESH", PRIMARY_SOFT, Color.WHITE);
+        refreshBtn.setBounds(1000, y, 105, 32);
+        barcodePanel.add(refreshBtn);
+
         JLabel hintLbl = new JLabel("Scan barcode or search product, set qty/discount, then click Add Item.");
         hintLbl.setFont(new Font("Segoe UI", Font.ITALIC, 12));
         hintLbl.setForeground(TEXT_MUTED);
         hintLbl.setBounds(20, 50, 470, 18);
         barcodePanel.add(hintLbl);
+
+        barcodeStatusBadge = new JLabel("Ready to scan", SwingConstants.CENTER);
+        barcodeStatusBadge.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        barcodeStatusBadge.setOpaque(true);
+        barcodeStatusBadge.setBorder(BorderFactory.createCompoundBorder(
+            new LineBorder(new Color(191, 219, 254), 1, true),
+            new EmptyBorder(3, 10, 3, 10)
+        ));
+        barcodeStatusBadge.setBounds(500, 48, 190, 24);
+        barcodePanel.add(barcodeStatusBadge);
+        setBarcodeStatus("Ready to scan", new Color(239, 246, 255), new Color(30, 64, 175), new Color(191, 219, 254));
 
         installEditableMoneyField(itemDiscountTxt, false);
 
@@ -517,9 +541,30 @@ public class PosController {
         productImageLbl.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         productImageLbl.setForeground(Color.GRAY);
 
+        stockInfoPanel = new JPanel(new BorderLayout(8, 0));
+        stockInfoPanel.setOpaque(true);
+        stockInfoPanel.setBackground(new Color(248, 250, 252));
+        stockInfoPanel.setBorder(BorderFactory.createCompoundBorder(
+            new LineBorder(new Color(203, 213, 225), 1, true),
+            new EmptyBorder(8, 10, 8, 10)
+        ));
+
+        stockLabelLbl = new JLabel("Stock Quantity");
+        stockLabelLbl.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        stockLabelLbl.setForeground(TEXT_MUTED);
+
+        stockValueLbl = new JLabel("--", SwingConstants.RIGHT);
+        stockValueLbl.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        stockValueLbl.setForeground(PRIMARY);
+
+        stockInfoPanel.add(stockLabelLbl, BorderLayout.WEST);
+        stockInfoPanel.add(stockValueLbl, BorderLayout.EAST);
+
         imagePanel.add(productImageLbl);
+        imagePanel.add(stockInfoPanel);
 
         resizeImageLabel();
+        updateStockDisplay(null);
 
         imagePanel.addComponentListener(new ComponentAdapter() {
             @Override
@@ -537,7 +582,7 @@ public class PosController {
     }
 
     private void resizeImageLabel() {
-        if (imagePanel == null || productImageLbl == null) {
+        if (imagePanel == null || productImageLbl == null || stockInfoPanel == null) {
             return;
         }
 
@@ -551,10 +596,39 @@ public class PosController {
             panelHeight = 220;
         }
 
+        int cardHeight = Math.max(46, Math.min(56, panelHeight / 4));
+        int verticalGap = 10;
         int lblWidth = panelWidth - 20;
-        int lblHeight = panelHeight - 20;
+        int lblHeight = panelHeight - (20 + cardHeight + verticalGap);
+
+        if (lblHeight < 80) {
+            lblHeight = 80;
+        }
 
         productImageLbl.setBounds(10, 10, lblWidth, lblHeight);
+        stockInfoPanel.setBounds(10, 10 + lblHeight + verticalGap, lblWidth, cardHeight);
+    }
+
+    private void updateStockDisplay(Integer stockQty) {
+        if (stockValueLbl == null) {
+            return;
+        }
+
+        if (stockQty == null) {
+            stockValueLbl.setText("--");
+            stockValueLbl.setForeground(TEXT_MUTED);
+            return;
+        }
+
+        stockValueLbl.setText(String.valueOf(Math.max(0, stockQty)));
+
+        if (stockQty <= 0) {
+            stockValueLbl.setForeground(DANGER);
+        } else if (stockQty <= 10) {
+            stockValueLbl.setForeground(WARNING);
+        } else {
+            stockValueLbl.setForeground(SUCCESS);
+        }
     }
 
     private void showProductImage(byte[] imageBytes) {
@@ -598,20 +672,36 @@ public class PosController {
 
     private void loadProductImageByBarcode(String barcode) {
         if (barcode == null || barcode.trim().isEmpty()) {
+            currentPreviewBarcode = null;
             selectedProductImageBytes = null;
             showProductImage(null);
+            updateStockDisplay(null);
+            setBarcodeStatus("Ready to scan", new Color(239, 246, 255), new Color(30, 64, 175), new Color(191, 219, 254));
             return;
         }
 
-        String sql = "SELECT product_image FROM products WHERE barcode = ?";
+        String normalizedBarcode = barcode.trim();
+        currentPreviewBarcode = normalizedBarcode;
+
+        String sql = "SELECT product_id, product_image, stock_quantity FROM products WHERE barcode = ?";
 
         try (Connection con = DBConnection.getConnection(); PreparedStatement ps = con.prepareStatement(sql)) {
 
-            ps.setString(1, barcode.trim());
+            ps.setString(1, normalizedBarcode);
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     String imageText = rs.getString("product_image");
+                    int productId = rs.getInt("product_id");
+                    int stockQty = rs.getInt("stock_quantity");
+                    int reservedQty = getReservedCartQty(productId);
+                    int availableQty = Math.max(0, stockQty - reservedQty);
+                    updateStockDisplay(availableQty);
+                    if (availableQty <= 0) {
+                        setBarcodeStatus("Out of stock", new Color(254, 242, 242), new Color(185, 28, 28), new Color(252, 165, 165));
+                    } else {
+                        setBarcodeStatus("Product found", new Color(240, 253, 244), new Color(21, 128, 61), new Color(134, 239, 172));
+                    }
 
                     if (imageText == null || imageText.trim().isEmpty()) {
                         selectedProductImageBytes = null;
@@ -657,27 +747,105 @@ public class PosController {
                     selectedProductImageBytes = null;
                     showProductImage(null);
                 } else {
+                    currentPreviewBarcode = null;
                     selectedProductImageBytes = null;
                     showProductImage(null);
+                    updateStockDisplay(null);
+                    setBarcodeStatus("Product not found", new Color(255, 247, 237), new Color(194, 65, 12), new Color(253, 186, 116));
                 }
             }
 
         } catch (Exception ex) {
             ex.printStackTrace();
+            currentPreviewBarcode = null;
             selectedProductImageBytes = null;
             showProductImage(null);
+            updateStockDisplay(null);
+            setBarcodeStatus("Lookup error", new Color(254, 242, 242), new Color(185, 28, 28), new Color(252, 165, 165));
         }
+    }
+
+    private void setBarcodeStatus(String text, Color bg, Color fg, Color borderColor) {
+        if (barcodeStatusBadge == null) {
+            return;
+        }
+
+        barcodeStatusBadge.setText(text);
+        barcodeStatusBadge.setBackground(bg);
+        barcodeStatusBadge.setForeground(fg);
+        barcodeStatusBadge.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(borderColor, 1, true),
+                new EmptyBorder(3, 10, 3, 10)
+        ));
+    }
+
+    private int getReservedCartQty(int productId) {
+        if (cartModel == null || productId <= 0) {
+            return 0;
+        }
+
+        int reservedQty = 0;
+        for (int i = 0; i < cartModel.getRowCount(); i++) {
+            Object rowProductObj = cartModel.getValueAt(i, 0);
+            Object rowQtyObj = cartModel.getValueAt(i, 3);
+
+            if (rowProductObj == null || rowQtyObj == null) {
+                continue;
+            }
+
+            try {
+                int rowProductId = Integer.parseInt(rowProductObj.toString());
+                if (rowProductId == productId) {
+                    reservedQty += Integer.parseInt(rowQtyObj.toString());
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return Math.max(0, reservedQty);
+    }
+
+    private void refreshCurrentPreviewStock() {
+        if (cartTable == null || cartModel == null || cartModel.getRowCount() == 0) {
+            clearPreviewSelection();
+            return;
+        }
+
+        int selectedRow = cartTable.getSelectedRow();
+        if (selectedRow == -1) {
+            clearPreviewSelection();
+            return;
+        }
+
+        int modelRow = cartTable.convertRowIndexToModel(selectedRow);
+        if (modelRow < 0 || modelRow >= cartModel.getRowCount()) {
+            clearPreviewSelection();
+            return;
+        }
+
+        String barcode = String.valueOf(cartModel.getValueAt(modelRow, 1));
+        loadProductImageByBarcode(barcode);
+    }
+
+    private void clearPreviewSelection() {
+        currentPreviewBarcode = null;
+        selectedProductImageBytes = null;
+        showProductImage(null);
+        updateStockDisplay(null);
+        setBarcodeStatus("Ready to scan", new Color(239, 246, 255), new Color(30, 64, 175), new Color(191, 219, 254));
     }
 
     private void loadSelectedCartProductImage() {
         if (cartTable == null) {
             showProductImage(null);
+            updateStockDisplay(null);
             return;
         }
 
         int row = cartTable.getSelectedRow();
         if (row == -1) {
             showProductImage(null);
+            updateStockDisplay(null);
             return;
         }
 
@@ -703,7 +871,7 @@ public class PosController {
         gbc.gridx = 0;
         gbc.gridy = row;
         gbc.weightx = 0.4;
-        panel.add(createFormLabel("Subtotal Amount"), gbc);
+        panel.add(createFormLabel("VATable Sales"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 0.6;
@@ -717,7 +885,7 @@ public class PosController {
         gbc.gridx = 0;
         gbc.gridy = row;
         gbc.weightx = 0.4;
-        panel.add(createFormLabel("VAT Amount"), gbc);
+        panel.add(createFormLabel("VAT (12%)"), gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 0.6;
@@ -1161,9 +1329,33 @@ public class PosController {
     private void wireEvents() {
         addItemBtn.addActionListener(e -> addProduct());
         removeItemBtn.addActionListener(e -> removeSelectedItem());
+        refreshBtn.addActionListener(e -> refreshPosView());
         searchProductBtn.addActionListener(e -> openProductSearchPopup());
 
-        barcodeTxt.addActionListener(e -> qtySpinner.requestFocusInWindow());
+        barcodeTxt.addActionListener(e -> {
+            updatePreviewFromBarcodeInput();
+            qtySpinner.requestFocusInWindow();
+        });
+
+        barcodePreviewTimer = new Timer(220, e -> updatePreviewFromBarcodeInput());
+        barcodePreviewTimer.setRepeats(false);
+
+        barcodeTxt.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                barcodePreviewTimer.restart();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                barcodePreviewTimer.restart();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                barcodePreviewTimer.restart();
+            }
+        });
 
         checkoutBtn.addActionListener(e -> checkoutSale());
 
@@ -1181,12 +1373,6 @@ public class PosController {
 
         printBtn.addActionListener(e -> printReceipt());
 
-        cartTable.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                loadSelectedCartRowToInputs();
-            }
-        });
-
         cartTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -1195,15 +1381,39 @@ public class PosController {
                 }
             }
         });
-        
-        barcodeTxt.addActionListener(e -> {
-            String barcode = barcodeTxt.getText().trim();
-            loadProductImageByBarcode(barcode);
-        });
-        
-        barcodeTxt.addActionListener(e -> {
-            loadProductImageByBarcode(barcodeTxt.getText().trim());
-        });
+    }
+
+    private void updatePreviewFromBarcodeInput() {
+        if (barcodeTxt == null) {
+            return;
+        }
+
+        String barcode = barcodeTxt.getText().trim();
+        if (barcode.isEmpty()) {
+            if (cartTable != null && cartTable.getSelectedRow() != -1) {
+                refreshCurrentPreviewStock();
+            } else {
+                clearPreviewSelection();
+            }
+            return;
+        }
+
+        loadProductImageByBarcode(barcode);
+    }
+
+    private void refreshPosView() {
+        String barcode = barcodeTxt == null ? "" : barcodeTxt.getText().trim();
+
+        if (!barcode.isEmpty()) {
+            updatePreviewFromBarcodeInput();
+        } else {
+            refreshCurrentPreviewStock();
+        }
+
+        calculateTotals();
+        if (barcodeTxt != null) {
+            barcodeTxt.requestFocusInWindow();
+        }
     }
 
     private void installKeyboardShortcuts() {
@@ -1252,10 +1462,8 @@ public class PosController {
 
     private void installBarcodeScannerDetection() {
         scannerTimer = new Timer(120, e -> {
-            String text = barcodeTxt.getText().trim();
-            if (looksLikeScannerInput(text)) {
-                qtySpinner.requestFocusInWindow();
-            }
+            // Keep focus on barcode field while typing.
+            // Scanner workflows are already handled by Enter key action.
         });
         scannerTimer.setRepeats(false);
 
@@ -1437,9 +1645,7 @@ public class PosController {
     private void resetPOS() {
         clearCart();
         clearItemEntryFields();
-        
-        selectedProductImageBytes = null;
-        showProductImage(null);
+        clearPreviewSelection();
 
         if (subtotalTxt != null) {
             subtotalTxt.setText("₱0.00");
@@ -1517,6 +1723,7 @@ public class PosController {
         qtySpinner.setValue(1);
         itemDiscountTxt.setText("0.00");
         cartTable.clearSelection();
+        clearPreviewSelection();
         barcodeTxt.requestFocusInWindow();
     }
 
@@ -1631,7 +1838,7 @@ public class PosController {
             qtySpinner.setValue(1);
             itemDiscountTxt.setText("0.00");
             cartTable.clearSelection();
-            loadProductImageByBarcode(barcode);
+            updatePreviewFromBarcodeInput();
             barcodeTxt.requestFocusInWindow();
 
             dialog.dispose();
@@ -1663,7 +1870,7 @@ public class PosController {
 
         if (product == null) {
             JOptionPane.showMessageDialog(posPanel, "Product not found.");
-            showProductImage(null);
+            clearPreviewSelection();
             barcodeTxt.requestFocusInWindow();
             barcodeTxt.selectAll();
             return;
@@ -1682,7 +1889,6 @@ public class PosController {
             return;
         }
 
-        loadProductImageByBarcode(barcode);
         upsertCartItem(product, qty, discount);
         clearItemEntryFields();
         calculateTotals();
@@ -1717,6 +1923,7 @@ public class PosController {
 
                 calculateTotals();
                 cartTable.setRowSelectionInterval(modelRow, modelRow);
+                refreshCurrentPreviewStock();
                 return;
             }
         }
@@ -1752,6 +1959,7 @@ public class PosController {
 
                 calculateTotals();
                 cartTable.setRowSelectionInterval(i, i);
+                refreshCurrentPreviewStock();
                 return;
             }
         }
@@ -1783,6 +1991,7 @@ public class PosController {
         calculateTotals();
         int lastRow = cartModel.getRowCount() - 1;
         cartTable.setRowSelectionInterval(lastRow, lastRow);
+        refreshCurrentPreviewStock();
     }
 
     private void minusSelectedItemQty() {
@@ -1816,6 +2025,7 @@ public class PosController {
                 cartModel.removeRow(modelRow);
                 computeTotals();
                 clearItemEntryFields();
+                refreshCurrentPreviewStock();
             }
             return;
         }
@@ -1836,6 +2046,7 @@ public class PosController {
 
         calculateTotals();
         cartTable.setRowSelectionInterval(modelRow, modelRow);
+        refreshCurrentPreviewStock();
     }
 
     private void removeSelectedItem() {
@@ -1858,6 +2069,7 @@ public class PosController {
             cartModel.removeRow(modelRow);
             calculateTotals();
             clearItemEntryFields();
+            refreshCurrentPreviewStock();
         }
             // Listen for quantity or discount changes in the table
             cartModel.addTableModelListener(e -> calculateTotals());
@@ -2108,9 +2320,18 @@ public class PosController {
                 throw new SQLException("Failed to create sale.");
             }
 
-            String saleItemSql = "INSERT INTO sale_items "
-                    + "(sale_id, product_id, quantity, unit_price, discount, total_price) "
-                    + "VALUES (?, ?, ?, ?, ?, ?)";
+            boolean hasCostSnapshotColumn = ensureSaleItemsCostSnapshotColumn(conn);
+
+            String saleItemSql;
+            if (hasCostSnapshotColumn) {
+                saleItemSql = "INSERT INTO sale_items "
+                        + "(sale_id, product_id, quantity, unit_price, discount, total_price, cost_price_snapshot) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)";
+            } else {
+                saleItemSql = "INSERT INTO sale_items "
+                        + "(sale_id, product_id, quantity, unit_price, discount, total_price) "
+                        + "VALUES (?, ?, ?, ?, ?, ?)";
+            }
 
             psSaleItem = conn.prepareStatement(saleItemSql);
 
@@ -2143,6 +2364,12 @@ public class PosController {
                 psSaleItem.setBigDecimal(4, unitPrice);
                 psSaleItem.setBigDecimal(5, discount);
                 psSaleItem.setBigDecimal(6, subtotal);
+
+                if (hasCostSnapshotColumn) {
+                    BigDecimal costPriceSnapshot = getCurrentProductCost(productId, conn);
+                    psSaleItem.setBigDecimal(7, costPriceSnapshot);
+                }
+
                 psSaleItem.addBatch();
 
                 psUpdateStock.setInt(1, qty);
@@ -2246,8 +2473,8 @@ public class PosController {
         }
 
         sb.append("----------------------------------------\n");
-        sb.append(String.format("%-20s %15s\n", "Subtotal:", subtotalTxt.getText()));
-        sb.append(String.format("%-20s %15s\n", "VAT:", vatTxt.getText()));
+        sb.append(String.format("%-20s %15s\n", "VATable Sales:", subtotalTxt.getText()));
+        sb.append(String.format("%-20s %15s\n", "VAT (12%):", vatTxt.getText()));
         sb.append(String.format("%-20s %15s\n", "Discount:", discountTxt.getText()));
         sb.append(String.format("%-20s %15s\n", "Total:", totalTxt.getText()));
         sb.append(String.format("%-20s %15s\n", "Payment:", paymentMethod));
@@ -2450,6 +2677,56 @@ public class PosController {
             }
         }
         return -1;
+    }
+
+    private boolean ensureSaleItemsCostSnapshotColumn(Connection conn) {
+        try {
+            if (hasSaleItemsCostSnapshotColumn(conn)) {
+                return true;
+            }
+
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("ALTER TABLE sale_items ADD COLUMN cost_price_snapshot DECIMAL(12,2) NULL");
+            } catch (SQLException ignored) {
+                // Ignore: table may already be updated by another client or schema permissions may be limited.
+            }
+
+            return hasSaleItemsCostSnapshotColumn(conn);
+        } catch (SQLException ignored) {
+            return false;
+        }
+    }
+
+    private boolean hasSaleItemsCostSnapshotColumn(Connection conn) throws SQLException {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String catalog = conn.getCatalog();
+
+        try (ResultSet rs = metaData.getColumns(catalog, null, "sale_items", "cost_price_snapshot")) {
+            if (rs.next()) {
+                return true;
+            }
+        }
+
+        try (ResultSet rs = metaData.getColumns(catalog, null, "SALE_ITEMS", "COST_PRICE_SNAPSHOT")) {
+            return rs.next();
+        }
+    }
+
+    private BigDecimal getCurrentProductCost(int productId, Connection conn) {
+        String sql = "SELECT COALESCE(cost_price, 0) AS cost_price FROM products WHERE product_id = ?";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, productId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    BigDecimal cost = rs.getBigDecimal("cost_price");
+                    return cost == null ? BigDecimal.ZERO : cost;
+                }
+            }
+        } catch (SQLException ignored) {
+        }
+
+        return BigDecimal.ZERO;
     }
 
     private BigDecimal parseMoney(String value) {

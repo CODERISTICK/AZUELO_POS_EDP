@@ -23,6 +23,7 @@ import pointofsale.InventoryMovement;
 import pointofsale.PosController;
 import pointofsale.SalesHistory;
 
+import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import javax.swing.table.DefaultTableModel;
@@ -119,6 +120,7 @@ public class MainPanel extends javax.swing.JFrame {
     private javax.swing.JButton salesMonthFilterBtn;
     private javax.swing.JButton salesYearFilterBtn;
     private String dashboardSalesFilter = "TODAY";
+    private final DecimalFormat reportCurrencyFormat = new DecimalFormat("#,##0.00");
 
     private javax.swing.JButton salesTodayBtn;
     private javax.swing.JButton salesWeekBtn;
@@ -225,13 +227,9 @@ public class MainPanel extends javax.swing.JFrame {
         reports.loadSupplierCombo(supplierReport_cmb);
         reports.loadPaymentCombo(payment_cmb);
         reports.setupReportTable(report_tbl);
-        
-        reports.loadReportTypes(ReportType_txt);
-        reports.loadCategoryCombo(categoryReport_cmb);
-        reports.loadSupplierCombo(supplierReport_cmb);
-        reports.loadPaymentCombo(payment_cmb);
 
         reports.formatReportTable(report_tbl);
+        updateReportPreviewHeader();
         
         
         //dashboard
@@ -279,6 +277,7 @@ public class MainPanel extends javax.swing.JFrame {
         this.loggedInRole = role;
 
         loadLoggedInUserDetails();
+        initializeCurrentUserId();
         applyRoleBasedAccess();
 
         Runnable afterCheckoutRefresh = () -> {
@@ -399,6 +398,18 @@ public class MainPanel extends javax.swing.JFrame {
         onlineOffline_lbl.setText("● Online");
         onlineOffline_lbl.setForeground(new java.awt.Color(0, 180, 0));
         onlineOffline_lbl.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
+    }
+
+    private void initializeCurrentUserId() {
+        if (loggedInUsername == null || loggedInUsername.trim().isEmpty()) {
+            return;
+        }
+
+        Users userService = new Users();
+        int resolvedUserId = userService.getUserIdByUsername(loggedInUsername);
+        if (resolvedUserId > 0) {
+            currentUserId = resolvedUserId;
+        }
     }
 
     
@@ -924,8 +935,7 @@ private void showCard(String name) {
         role_cmb.setSelectedIndex(0);
         status_cmb.setSelectedIndex(0);
 
-        createdAt_txt1.setText("[Auto]");
-        updatedat_txt1.setText("[Auto]");
+        
 
         isEditMode = false;
         selectedUserId = -1;
@@ -934,6 +944,23 @@ private void showCard(String name) {
 
         password_txt.setEchoChar('\u2022');
         confirmPass_txt.setEchoChar('\u2022');
+    }
+
+    private boolean isAdminEditingSuperAdmin(Users.UserDetails details) {
+        return "Admin".equalsIgnoreCase(loggedInRole)
+                && details != null
+                && "Super Admin".equalsIgnoreCase(details.role);
+    }
+
+    private boolean confirmUserManagementAction() {
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Are you sure you want to perform this action?",
+                "Confirm Action",
+                JOptionPane.YES_NO_OPTION
+        );
+
+        return confirm == JOptionPane.YES_OPTION;
     }
 
     private void checkBarcodeDuplicate() {
@@ -1693,8 +1720,6 @@ private void showCard(String name) {
     
     
     private void refreshReportsModule() {
-        Reports reports = new Reports();
-
         String reportType = ReportType_txt.getSelectedItem().toString();
         String category = categoryReport_cmb.getSelectedItem().toString();
         String supplier = supplierReport_cmb.getSelectedItem().toString();
@@ -1712,6 +1737,49 @@ private void showCard(String name) {
                 supplier,
                 payment
         );
+
+        updateReportPreviewHeader();
+    }
+
+    private void updateReportPreviewHeader() {
+        double totalRevenue = 0.0;
+        double totalProfit = 0.0;
+
+        for (int i = 0; i < report_tbl.getRowCount(); i++) {
+            Object salesValue = report_tbl.getValueAt(i, 6);
+            Object profitValue = report_tbl.getValueAt(i, 7);
+            totalRevenue += parseAmountValue(salesValue);
+            totalProfit += parseAmountValue(profitValue);
+        }
+
+        String compactHeader = "<html>Report Preview | Rev: P" + reportCurrencyFormat.format(totalRevenue) + "</html>";
+        String fullHeader = "<html>Report Preview | Total Revenue: P" + reportCurrencyFormat.format(totalRevenue)
+                + " | Total Profit: P" + reportCurrencyFormat.format(totalProfit)
+                + " | Rows: " + report_tbl.getRowCount() + "</html>";
+
+        jLabel128.setText(compactHeader);
+        jLabel128.setToolTipText(fullHeader);
+    }
+
+    private double parseAmountValue(Object value) {
+        if (value == null) {
+            return 0.0;
+        }
+
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+
+        String cleaned = value.toString().replace("P", "").replace("₱", "").replace(",", "").trim();
+        if (cleaned.isEmpty()) {
+            return 0.0;
+        }
+
+        try {
+            return Double.parseDouble(cleaned);
+        } catch (NumberFormatException ex) {
+            return 0.0;
+        }
     }
     
     public void refreshAllAfterCheckout() {
@@ -1907,21 +1975,18 @@ private void showCard(String name) {
         updateCategory_btn = new javax.swing.JButton();
         deleteCategory_btn = new javax.swing.JButton();
         categoryName_txt = new javax.swing.JTextField();
-        jLabel37 = new javax.swing.JLabel();
         jLabel38 = new javax.swing.JLabel();
         jLabel39 = new javax.swing.JLabel();
-        jLabel41 = new javax.swing.JLabel();
         jScrollPane3 = new javax.swing.JScrollPane();
         Description_txt = new javax.swing.JTextArea();
-        jLabel43 = new javax.swing.JLabel();
-        updatedat_txt1 = new javax.swing.JTextField();
-        createdAt_txt1 = new javax.swing.JTextField();
+        jLabel41 = new javax.swing.JLabel();
         jPanel18 = new javax.swing.JPanel();
         jScrollPane4 = new javax.swing.JScrollPane();
         Category_tbl = new javax.swing.JTable();
         jLabel42 = new javax.swing.JLabel();
         jLabel151 = new javax.swing.JLabel();
         categoriesSearch_txt = new javax.swing.JTextField();
+        jLabel37 = new javax.swing.JLabel();
         supplierPanel = new javax.swing.JPanel();
         jPanel19 = new javax.swing.JPanel();
         supplierName_txt = new javax.swing.JTextField();
@@ -3303,7 +3368,7 @@ private void showCard(String name) {
                 addCategory_btnActionPerformed(evt);
             }
         });
-        jPanel17.add(addCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(500, 230, 90, 30));
+        jPanel17.add(addCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 380, 90, 30));
 
         clearCategory_btn.setBackground(new java.awt.Color(154, 154, 147));
         clearCategory_btn.setForeground(new java.awt.Color(0, 0, 0));
@@ -3313,7 +3378,7 @@ private void showCard(String name) {
                 clearCategory_btnActionPerformed(evt);
             }
         });
-        jPanel17.add(clearCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(830, 230, 90, 30));
+        jPanel17.add(clearCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(310, 380, 90, 30));
 
         updateCategory_btn.setBackground(new java.awt.Color(5, 59, 114));
         updateCategory_btn.setForeground(new java.awt.Color(255, 255, 255));
@@ -3323,7 +3388,7 @@ private void showCard(String name) {
                 updateCategory_btnActionPerformed(evt);
             }
         });
-        jPanel17.add(updateCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(610, 230, 90, 30));
+        jPanel17.add(updateCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(110, 380, 90, 30));
 
         deleteCategory_btn.setBackground(new java.awt.Color(128, 0, 16));
         deleteCategory_btn.setForeground(new java.awt.Color(255, 255, 255));
@@ -3333,52 +3398,32 @@ private void showCard(String name) {
                 deleteCategory_btnActionPerformed(evt);
             }
         });
-        jPanel17.add(deleteCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(720, 230, 90, 30));
+        jPanel17.add(deleteCategory_btn, new org.netbeans.lib.awtextra.AbsoluteConstraints(210, 380, 90, 30));
 
         categoryName_txt.setBackground(new java.awt.Color(255, 255, 255));
-        jPanel17.add(categoryName_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(150, 50, 310, 30));
-
-        jLabel37.setFont(new java.awt.Font("Segoe UI", 0, 18)); // NOI18N
-        jLabel37.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel37.setText("Category Details");
-        jPanel17.add(jLabel37, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 0, -1, -1));
+        jPanel17.add(categoryName_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 110, 390, 40));
 
         jLabel38.setForeground(new java.awt.Color(0, 0, 0));
         jLabel38.setText("Category Name");
-        jPanel17.add(jLabel38, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 60, 90, 20));
+        jPanel17.add(jLabel38, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 80, 90, 20));
 
         jLabel39.setForeground(new java.awt.Color(0, 0, 0));
         jLabel39.setText("Description");
-        jPanel17.add(jLabel39, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 76, 90, 40));
-
-        jLabel41.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel41.setText("Udpated At");
-        jPanel17.add(jLabel41, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 230, 80, 30));
+        jPanel17.add(jLabel39, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 170, 90, 40));
 
         Description_txt.setBackground(new java.awt.Color(255, 255, 255));
         Description_txt.setColumns(20);
         Description_txt.setRows(5);
         jScrollPane3.setViewportView(Description_txt);
 
-        jPanel17.add(jScrollPane3, new org.netbeans.lib.awtextra.AbsoluteConstraints(150, 90, 310, 90));
+        jPanel17.add(jScrollPane3, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 210, 390, 130));
 
-        jLabel43.setForeground(new java.awt.Color(0, 0, 0));
-        jLabel43.setText("Created At");
-        jPanel17.add(jLabel43, new org.netbeans.lib.awtextra.AbsoluteConstraints(20, 200, 110, 20));
+        jLabel41.setFont(new java.awt.Font("Segoe UI", 0, 18)); // NOI18N
+        jLabel41.setForeground(new java.awt.Color(0, 0, 0));
+        jLabel41.setText("Category Details");
+        jPanel17.add(jLabel41, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 20, -1, -1));
 
-        updatedat_txt1.setEditable(false);
-        updatedat_txt1.setBackground(new java.awt.Color(255, 255, 255));
-        updatedat_txt1.setHorizontalAlignment(javax.swing.JTextField.CENTER);
-        updatedat_txt1.setText("[Auto]");
-        jPanel17.add(updatedat_txt1, new org.netbeans.lib.awtextra.AbsoluteConstraints(150, 230, 310, 30));
-
-        createdAt_txt1.setEditable(false);
-        createdAt_txt1.setBackground(new java.awt.Color(255, 255, 255));
-        createdAt_txt1.setHorizontalAlignment(javax.swing.JTextField.CENTER);
-        createdAt_txt1.setText("[Auto]");
-        jPanel17.add(createdAt_txt1, new org.netbeans.lib.awtextra.AbsoluteConstraints(150, 190, 310, 30));
-
-        categoriesPanel.add(jPanel17, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 10, 1080, 270));
+        categoriesPanel.add(jPanel17, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 30, 430, 450));
 
         jPanel18.setBackground(new java.awt.Color(248, 249, 250));
         jPanel18.setLayout(new org.netbeans.lib.awtextra.AbsoluteLayout());
@@ -3409,14 +3454,14 @@ private void showCard(String name) {
             Category_tbl.getColumnModel().getColumn(4).setResizable(false);
         }
 
-        jPanel18.add(jScrollPane4, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 60, 1060, 220));
+        jPanel18.add(jScrollPane4, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 160, 720, 380));
 
         jLabel42.setForeground(new java.awt.Color(0, 0, 0));
         jLabel42.setText("Search:");
-        jPanel18.add(jLabel42, new org.netbeans.lib.awtextra.AbsoluteConstraints(60, 10, 50, 30));
+        jPanel18.add(jLabel42, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 60, 50, 30));
 
         jLabel151.setIcon(new javax.swing.ImageIcon(getClass().getResource("/pointofsale.ICONS/search (2).png"))); // NOI18N
-        jPanel18.add(jLabel151, new org.netbeans.lib.awtextra.AbsoluteConstraints(400, 10, 30, 30));
+        jPanel18.add(jLabel151, new org.netbeans.lib.awtextra.AbsoluteConstraints(420, 100, 40, 40));
 
         categoriesSearch_txt.setBackground(new java.awt.Color(255, 255, 255));
         categoriesSearch_txt.addKeyListener(new java.awt.event.KeyAdapter() {
@@ -3424,9 +3469,14 @@ private void showCard(String name) {
                 categoriesSearch_txtKeyReleased(evt);
             }
         });
-        jPanel18.add(categoriesSearch_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(140, 10, 290, 30));
+        jPanel18.add(categoriesSearch_txt, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 100, 450, 40));
 
-        categoriesPanel.add(jPanel18, new org.netbeans.lib.awtextra.AbsoluteConstraints(50, 300, 1090, 290));
+        jLabel37.setFont(new java.awt.Font("Segoe UI", 0, 18)); // NOI18N
+        jLabel37.setForeground(new java.awt.Color(0, 0, 0));
+        jLabel37.setText("Category Lists");
+        jPanel18.add(jLabel37, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 5, 130, 40));
+
+        categoriesPanel.add(jPanel18, new org.netbeans.lib.awtextra.AbsoluteConstraints(450, 30, 730, 550));
 
         contentPanel.add(categoriesPanel, "categories");
 
@@ -3715,7 +3765,7 @@ private void showCard(String name) {
         jLabel128.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
         jLabel128.setForeground(new java.awt.Color(255, 255, 255));
         jLabel128.setText("Report Preview");
-        jPanel52.add(jLabel128, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 150, 20));
+        jPanel52.add(jLabel128, new org.netbeans.lib.awtextra.AbsoluteConstraints(10, 10, 250, 20));
 
         reportsPanel.add(jPanel52, new org.netbeans.lib.awtextra.AbsoluteConstraints(70, 280, 1020, 40));
 
@@ -5220,6 +5270,15 @@ private void showCard(String name) {
                 return;
             }
 
+            if (isAdminEditingSuperAdmin(details)) {
+                JOptionPane.showMessageDialog(this,
+                        "You cannot update the SuperAdmin account.",
+                        "Access Denied",
+                        JOptionPane.WARNING_MESSAGE);
+                clearFields();
+                return;
+            }
+
             userID_txt.setText(String.valueOf(details.userId));
             firstname_txt1.setText(details.firstName == null ? "" : details.firstName);
             middlename_txt.setText(details.middleName == null ? "" : details.middleName);
@@ -5229,8 +5288,7 @@ private void showCard(String name) {
             confirmPass_txt.setText("");
             confirmPass_txt.setForeground(java.awt.Color.BLACK);
             status_cmb.setSelectedItem(details.status);
-            createdAt_txt1.setText(details.createdAt == null ? "[Auto]" : details.createdAt);
-            updatedat_txt1.setText(details.updatedAt == null ? "[Auto]" : details.updatedAt);
+            
 
             isEditMode = true;
             addUser_btn.setEnabled(false);
@@ -5311,8 +5369,12 @@ private void showCard(String name) {
         }
 
         Users.UserDetails currentDetails = user.getUserById(selectedUserId);
+        if (currentDetails == null) {
+            JOptionPane.showMessageDialog(this, "Unable to load the selected user.");
+            return;
+        }
+
         if ("Super Admin".equals(role)
-                && currentDetails != null
                 && !"Super Admin".equals(currentDetails.role)
                 && user.isSuperAdminExists()) {
             JOptionPane.showMessageDialog(this,
@@ -5324,9 +5386,13 @@ private void showCard(String name) {
 
         if ("Admin".equals(loggedInRole) && "Super Admin".equals(currentDetails.role)) {
             JOptionPane.showMessageDialog(this,
-                    "Admins are not allowed to edit Super Admin credentials.",
+                    "You cannot update the SuperAdmin account.",
                     "Access Denied",
                     JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        if (!confirmUserManagementAction()) {
             return;
         }
 
@@ -5348,33 +5414,9 @@ private void showCard(String name) {
 
         int id = Integer.parseInt(user_tbl.getValueAt(row, 0).toString());
         Users user = new Users();
-        Users.UserDetails details = user.getUserById(id);
 
-        if (details != null && "Super Admin".equals(details.role)) {
-            JOptionPane.showMessageDialog(this,
-                    "Super Admin account cannot be deleted.",
-                    "Delete Blocked",
-                    JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
-        if ("Admin".equals(loggedInRole) && "Super Admin".equals(details.role)) {
-            JOptionPane.showMessageDialog(this,
-                    "Admins are not allowed to delete Super Admin accounts.",
-                    "Access Denied",
-                    JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
-        int confirm = JOptionPane.showConfirmDialog(
-                this,
-                "Are you sure you want to delete this user?",
-                "Confirm Delete",
-                JOptionPane.YES_NO_OPTION
-        );
-
-        if (confirm == JOptionPane.YES_OPTION) {
-            if (user.deleteUser(id)) {
+        if (confirmUserManagementAction()) {
+            if (user.deleteUser(id, currentUserId)) {
                 user.loadUsers(user_tbl);
                 clearFields();
             }
@@ -6933,6 +6975,7 @@ private void showCard(String name) {
                 supplier,
                 payment
         );
+        updateReportPreviewHeader();
     }//GEN-LAST:event_generateReport_btnActionPerformed
 
     private void exportPdf_btnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_exportPdf_btnActionPerformed
@@ -7125,7 +7168,6 @@ private void showCard(String name) {
     private javax.swing.JTextField contactPerson_txt;
     private javax.swing.JPanel contentPanel;
     private javax.swing.JTextField costPrice_txt;
-    private javax.swing.JTextField createdAt_txt1;
     private javax.swing.JLabel currentStockOUT_lbl;
     private javax.swing.JLabel currentStock_lbl;
     private javax.swing.JTable dashboard_tbl;
@@ -7243,7 +7285,6 @@ private void showCard(String name) {
     private javax.swing.JLabel jLabel40;
     private javax.swing.JLabel jLabel41;
     private javax.swing.JLabel jLabel42;
-    private javax.swing.JLabel jLabel43;
     private javax.swing.JLabel jLabel44;
     private javax.swing.JLabel jLabel45;
     private javax.swing.JLabel jLabel46;
@@ -7456,7 +7497,6 @@ private void showCard(String name) {
     private javax.swing.JButton updateCategory_btn;
     private javax.swing.JButton updateProduct_btn;
     private javax.swing.JButton update_btn;
-    private javax.swing.JTextField updatedat_txt1;
     private javax.swing.JTextField userID_txt;
     private javax.swing.JLabel userNameWelcome_lbl;
     private javax.swing.JPanel userPanel;

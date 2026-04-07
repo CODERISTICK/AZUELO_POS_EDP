@@ -218,15 +218,58 @@ public class Users {
         }
     }
 
-    public boolean deleteUser(int id) {
+    public boolean deleteUser(int id, int currentLoggedInUserId) {
         try {
             UserDetails user = getUserById(id);
-            if (user != null && "Super Admin".equals(user.role)) {
+            if (user == null) {
                 JOptionPane.showMessageDialog(null,
-                        "Super Admin account cannot be deleted.",
+                        "User not found.",
                         "Delete Blocked",
                         JOptionPane.WARNING_MESSAGE);
                 return false;
+            }
+
+            String role = user.role == null ? "" : user.role.trim();
+
+            if ("Super Admin".equalsIgnoreCase(role)) {
+                JOptionPane.showMessageDialog(null,
+                        "Super Admin cannot be deleted.",
+                        "Delete Blocked",
+                        JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+
+            if ("Admin".equalsIgnoreCase(role)) {
+                int totalAdmins = countUsersByRole("Admin");
+
+                if (id == currentLoggedInUserId) {
+                    JOptionPane.showMessageDialog(null,
+                            "You cannot delete your own account.",
+                            "Delete Blocked",
+                            JOptionPane.WARNING_MESSAGE);
+                    return false;
+                }
+
+                if (totalAdmins <= 1) {
+                    JOptionPane.showMessageDialog(null,
+                            "Cannot delete the last Admin account.",
+                            "Delete Blocked",
+                            JOptionPane.WARNING_MESSAGE);
+                    return false;
+                }
+            }
+
+            if ("Cashier".equalsIgnoreCase(role)
+                    || "Manager".equalsIgnoreCase(role)
+                    || "Inventory Clerk".equalsIgnoreCase(role)) {
+                int totalByRole = countUsersByRole(role);
+                if (totalByRole <= 1) {
+                    JOptionPane.showMessageDialog(null,
+                            "Cannot delete if one account.",
+                            "Delete Blocked",
+                            JOptionPane.WARNING_MESSAGE);
+                    return false;
+                }
             }
 
             String sql = "DELETE FROM users WHERE user_id=?";
@@ -246,6 +289,10 @@ public class Users {
             e.printStackTrace();
             return false;
         }
+    }
+
+    public boolean deleteUser(int id) {
+        return deleteUser(id, -1);
     }
 
     public UserDetails getUserById(int userId) {
@@ -539,5 +586,39 @@ public class Users {
             e.printStackTrace();
         }
         return false;
+    }
+
+    public int getUserIdByUsername(String username) {
+        try {
+            String sql = "SELECT user_id FROM users WHERE username = ? LIMIT 1";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, username);
+
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt("user_id");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return -1;
+    }
+
+    private int countUsersByRole(String role) {
+        try {
+            String sql = "SELECT COUNT(*) FROM users WHERE role = ?";
+            PreparedStatement pst = con.prepareStatement(sql);
+            pst.setString(1, role);
+
+            ResultSet rs = pst.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return 0;
     }
 }
